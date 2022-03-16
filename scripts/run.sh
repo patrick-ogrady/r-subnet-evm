@@ -99,7 +99,8 @@ cat <<EOF > /tmp/genesis.json
     },
     "randomPartyConfig":{
       "blockTimestamp":0,
-      "phaseDuration":60
+      "phaseDuration":60,
+      "commitFee":1000000000000000000
     }
   },
   "alloc": {

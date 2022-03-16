@@ -268,9 +268,11 @@ func commitRandomParty(evm PrecompileAccessibleState, callerAddr, addr common.Ad
 	if readOnly {
 		return nil, remainingGas, vmerrs.ErrWriteProtection
 	}
+	idx := addCounterHash(stateDB, commitPrefix, h)
 
 	stateDB.SubBalance(callerAddr, commitFeeAmount)
-	return common.BigToHash(addCounterHash(stateDB, commitPrefix, h)).Bytes(), remainingGas, nil
+	setRandomPartyFeeRecipient(stateDB, idx, callerAddr)
+	return common.BigToHash(idx).Bytes(), remainingGas, nil
 }
 
 func revealRandomParty(evm PrecompileAccessibleState, callerAddr, addr common.Address, input []byte, suppliedGas uint64, readOnly bool) (ret []byte, remainingGas uint64, err error) {
