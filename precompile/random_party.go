@@ -44,6 +44,7 @@ var (
 	ErrTooLate              = errors.New("too late to interact")
 	ErrTooEarly             = errors.New("too early")
 	ErrDuplicateReveal      = errors.New("duplicate reveal")
+	ErrInsufficientFunds    = errors.New("insufficient funds to perform commit")
 )
 
 // RandomPartyConfig specifies the configuration of the allow list.
@@ -52,6 +53,7 @@ type RandomPartyConfig struct {
 	BlockTimestamp *big.Int `json:"blockTimestamp"`
 
 	PhaseDuration *big.Int `json:"phaseDuration"` // (seconds) recommend 1 hour
+	CommitFee     *big.Int `json:"commitFee"`
 }
 
 // Address returns the address of the random party contract.
@@ -66,11 +68,15 @@ func (c *RandomPartyConfig) Timestamp() *big.Int { return c.BlockTimestamp }
 func SetPhaseDuration(state StateDB, duration *big.Int) {
 	setRandomPartyBig(state, phaseDurationKey, duration)
 }
+func SetCommitFee(state StateDB, fee *big.Int) {
+	setRandomPartyBig(state, commitFeeKey, fee)
+}
 
 // Configure initializes the address space of [precompileAddr] by initializing the role of each of
 // the addresses in [RandomPartyAdmins].
 func (c *RandomPartyConfig) Configure(state StateDB) {
 	SetPhaseDuration(state, c.PhaseDuration)
+	SetCommitFee(state, c.CommitFee)
 }
 
 // Contract returns the singleton stateful precompiled contract to be used for
@@ -86,6 +92,8 @@ var (
 	revealPrefix      = []byte{0x4}
 	resultPrefix      = []byte{0x5}
 	phaseDurationKey  = []byte{0x6}
+	commitFeeKey      = []byte{0x7}
+	commitOwnerPrefix = []byte{0x8}
 )
 
 func setRandomPartyBig(state StateDB, key []byte, val *big.Int) {
@@ -132,6 +140,25 @@ func getResultHash(state StateDB, round *big.Int) common.Hash {
 	k := append(resultPrefix, delim)
 	k = append(k, round.Bytes()...)
 	return state.GetState(RandomPartyAddress, common.BytesToHash(k))
+}
+
+func setRandomPartyFeeRecipient(state StateDB, idx *big.Int, addr common.Address) {
+	k := append(commitOwnerPrefix, delim)
+	k = append(k, idx.Bytes()...)
+	state.SetState(RandomPartyAddress, common.BytesToHash(k), addr.Hash())
+}
+
+func getRandomPartyFeeRecipient(state StateDB, idx *big.Int) common.Address {
+	k := append(commitOwnerPrefix, delim)
+	k = append(k, idx.Bytes()...)
+	h := state.GetState(RandomPartyAddress, common.BytesToHash(k))
+	return common.BytesToAddress(h.Bytes())
+}
+
+func deleteRandomPartyFeeRecipient(state StateDB, idx *big.Int) {
+	k := append(commitOwnerPrefix, delim)
+	k = append(k, idx.Bytes()...)
+	state.SetState(RandomPartyAddress, common.BytesToHash(k), common.Hash{})
 }
 
 func PackCommitRandomParty(hash common.Hash) []byte {
@@ -201,7 +228,9 @@ func startRandomParty(evm PrecompileAccessibleState, callerAddr, addr common.Add
 		if remainingGas, err = deductGas(remainingGas, DeleteGasCost); err != nil {
 			return nil, 0, err
 		}
-		deleteCounterHash(stateDB, revealPrefix, new(big.Int).SetUint64(i))
+		idx := new(big.Int).SetUint64(i)
+		deleteCounterHash(stateDB, revealPrefix, idx)
+		deleteRandomPartyFeeRecipient(stateDB, idx)
 	}
 	setRandomPartyBig(stateDB, revealPrefix, common.Big0)
 
@@ -231,10 +260,16 @@ func commitRandomParty(evm PrecompileAccessibleState, callerAddr, addr common.Ad
 		return nil, remainingGas, err
 	}
 
+	commitFeeAmount := getRandomPartyBig(stateDB, commitFeeKey)
+	if stateDB.GetBalance(callerAddr).Cmp(commitFeeAmount) < 0 {
+		return nil, remainingGas, ErrInsufficientFunds
+	}
+
 	if readOnly {
 		return nil, remainingGas, vmerrs.ErrWriteProtection
 	}
 
+	stateDB.SubBalance(callerAddr, commitFeeAmount)
 	return common.BigToHash(addCounterHash(stateDB, commitPrefix, h)).Bytes(), remainingGas, nil
 }
 
@@ -273,11 +308,20 @@ func revealRandomParty(evm PrecompileAccessibleState, callerAddr, addr common.Ad
 		return nil, remainingGas, fmt.Errorf("expected %v but got %v (hash %v preimage %v)", h, ch, h, preimage)
 	}
 
+	feeRecipient := getRandomPartyFeeRecipient(stateDB, idx)
+
 	if readOnly {
 		return nil, remainingGas, vmerrs.ErrWriteProtection
 	}
 
-	deleteCounterHash(stateDB, commitPrefix, idx) // prevent duplicate reveals
+	if !stateDB.Exist(feeRecipient) {
+		stateDB.CreateAccount(feeRecipient) // could've been deleted between interactions
+	}
+	stateDB.AddBalance(feeRecipient, getRandomPartyBig(stateDB, commitFeeKey))
+
+	// prevent duplicate reveals
+	deleteCounterHash(stateDB, commitPrefix, idx)
+	deleteRandomPartyFeeRecipient(stateDB, idx)
 	addCounterHash(stateDB, revealPrefix, preimage)
 	return []byte{}, remainingGas, nil
 }

@@ -519,12 +519,14 @@ func createNewRandomState(t *testing.T) *state.StateDB {
 		t.Fatal(err)
 	}
 	precompile.SetPhaseDuration(state, big.NewInt(3))
+	precompile.SetCommitFee(state, big.NewInt(1000))
 	return state
 }
 
 func TestRandomParty(t *testing.T) {
 	anyAddr := common.HexToAddress("0xF60C45c607D0f41687c94C314d300f483661E13a")
 	s := createNewRandomState(t)
+	s.AddBalance(anyAddr, big.NewInt(100000))
 
 	for _, test := range []struct {
 		name  string
@@ -573,9 +575,20 @@ func TestRandomParty(t *testing.T) {
 			expectedRes: common.BigToHash(big.NewInt(0)).Bytes(),
 		},
 		{
+			name:  "commit insufficient",
+			btime: big.NewInt(10),
+			input: func() []byte {
+				s.SetBalance(anyAddr, common.Big0)
+				return precompile.PackCommitRandomParty(crypto.Keccak256Hash(common.BytesToHash([]byte{0x2}).Bytes()))
+			},
+			suppliedGas: precompile.CommitGasCost,
+			expectedErr: precompile.ErrInsufficientFunds.Error(),
+		},
+		{
 			name:  "commit 2",
 			btime: big.NewInt(10),
 			input: func() []byte {
+				s.SetBalance(anyAddr, big.NewInt(10000))
 				return precompile.PackCommitRandomParty(crypto.Keccak256Hash(common.BytesToHash([]byte{0x2}).Bytes()))
 			},
 			suppliedGas: precompile.CommitGasCost,
@@ -730,7 +743,7 @@ func TestRandomParty(t *testing.T) {
 			ret, remainingGas, err := precompile.RandomPartyPrecompile.Run(&mockAccessibleState{blockTime: test.btime, state: s}, anyAddr, precompile.RandomPartyAddress, test.input(), test.suppliedGas, false)
 			if len(test.expectedErr) != 0 {
 				if err == nil {
-					assert.Failf(t, "run expectedly passed without error", "expected error %q", test.expectedErr)
+					assert.Failf(t, "run unexpectedly passed without error", "expected error %q", test.expectedErr)
 				} else {
 					assert.True(t, strings.Contains(err.Error(), test.expectedErr), "expected error (%s) to contain substring (%s)", err, test.expectedErr)
 				}
