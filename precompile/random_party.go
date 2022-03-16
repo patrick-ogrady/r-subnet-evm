@@ -4,7 +4,6 @@
 package precompile
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"math/big"
@@ -188,7 +187,7 @@ func startRandomParty(evm PrecompileAccessibleState, callerAddr, addr common.Add
 	}
 
 	commits := getRandomPartyBig(stateDB, commitPrefix).Uint64() // should never have this many commits
-	for i := uint64(0); commits < 0; i++ {
+	for i := uint64(0); i < commits; i++ {
 		if remainingGas, err = deductGas(remainingGas, DeleteGasCost); err != nil {
 			return nil, 0, err
 		}
@@ -197,7 +196,7 @@ func startRandomParty(evm PrecompileAccessibleState, callerAddr, addr common.Add
 	setRandomPartyBig(stateDB, commitPrefix, common.Big0)
 
 	reveals := getRandomPartyBig(stateDB, revealPrefix).Uint64() // should never have this many commits
-	for i := uint64(0); reveals < 0; i++ {
+	for i := uint64(0); i < reveals; i++ {
 		if remainingGas, err = deductGas(remainingGas, DeleteGasCost); err != nil {
 			return nil, 0, err
 		}
@@ -261,10 +260,11 @@ func revealRandomParty(evm PrecompileAccessibleState, callerAddr, addr common.Ad
 	if err != nil {
 		return nil, remainingGas, err
 	}
-	h := getCounterHash(stateDB, commitPrefix, idx)
-	if bytes.Compare(h.Bytes(), nil) == 0 {
+	largestCommit := getRandomPartyBig(stateDB, commitPrefix)
+	if idx.Cmp(largestCommit) >= 0 {
 		return nil, remainingGas, fmt.Errorf("no hash with index %d", idx)
 	}
+	h := getCounterHash(stateDB, commitPrefix, idx)
 	ch := crypto.Keccak256Hash(preimage.Bytes())
 	if h != ch {
 		return nil, remainingGas, fmt.Errorf("expected %v but got %v (hash %v preimage %v)", h, ch, h, preimage)
@@ -309,6 +309,8 @@ func computeRandomParty(evm PrecompileAccessibleState, callerAddr, addr common.A
 		return nil, remainingGas, vmerrs.ErrWriteProtection
 	}
 
+	setRandomPartyBig(stateDB, commitDeadlineKey, common.Big0)
+	setRandomPartyBig(stateDB, revealDeadlineKey, common.Big0)
 	addResultHash(stateDB, crypto.Keccak256Hash(preimages))
 	return []byte{}, remainingGas, nil
 }

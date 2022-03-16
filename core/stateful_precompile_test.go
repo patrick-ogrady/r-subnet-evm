@@ -644,6 +644,51 @@ func TestRandomParty(t *testing.T) {
 			suppliedGas: precompile.NextCost,
 			expectedRes: big.NewInt(1).Bytes(),
 		},
+		{
+			name:  "compute again",
+			btime: big.NewInt(20),
+			input: func() []byte {
+				return precompile.CalculateFunctionSelector("compute()")
+			},
+			suppliedGas: precompile.ComputeGasCost + precompile.ComputeItemCost,
+			expectedErr: precompile.ErrNoRandomPartyStarted.Error(),
+		},
+		{
+			name:  "start second party",
+			btime: big.NewInt(20),
+			input: func() []byte {
+				return precompile.CalculateFunctionSelector("start()")
+			},
+			suppliedGas: precompile.StartGasCost + precompile.DeleteGasCost*3,
+			expectedRes: []byte{},
+		},
+		{
+			name:  "commit second party",
+			btime: big.NewInt(20),
+			input: func() []byte {
+				return precompile.PackCommitRandomParty(crypto.Keccak256Hash(common.BytesToHash([]byte{0x1}).Bytes()))
+			},
+			suppliedGas: precompile.CommitGasCost,
+			expectedRes: big.NewInt(0).Bytes(),
+		},
+		{
+			name:  "reveal old key",
+			btime: big.NewInt(24),
+			input: func() []byte {
+				return precompile.PackRevealRandomParty(big.NewInt(1), common.BytesToHash([]byte{0x2}))
+			},
+			suppliedGas: precompile.RevealGasCost,
+			expectedErr: "no hash with index 1",
+		},
+		{
+			name:  "start third party",
+			btime: big.NewInt(30),
+			input: func() []byte {
+				return precompile.CalculateFunctionSelector("start()")
+			},
+			suppliedGas: precompile.StartGasCost + precompile.DeleteGasCost,
+			expectedErr: precompile.ErrRandomPartyUnderway.Error(),
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			ret, remainingGas, err := precompile.RandomPartyPrecompile.Run(&mockAccessibleState{blockTime: test.btime, state: s}, anyAddr, precompile.RandomPartyAddress, test.input(), test.suppliedGas, false)
