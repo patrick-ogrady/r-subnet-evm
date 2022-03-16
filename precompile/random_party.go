@@ -196,6 +196,8 @@ func UnpackResultRandomParty(input []byte) (*big.Int, error) {
 	return new(big.Int).SetBytes(input), nil
 }
 
+// TODO: allow person that spins up a random party to provide an incentive pool
+// that is shared equally amongest all revealers
 func startRandomParty(evm PrecompileAccessibleState, callerAddr, addr common.Address, input []byte, suppliedGas uint64, value *big.Int, readOnly bool) (ret []byte, remainingGas uint64, err error) {
 	if remainingGas, err = deductGas(suppliedGas, StartGasCost); err != nil {
 		return nil, 0, err
@@ -346,6 +348,9 @@ func computeRandomParty(evm PrecompileAccessibleState, callerAddr, addr common.A
 	if len(input) != 0 {
 		return nil, remainingGas, fmt.Errorf("invalid input length for compute: %d", len(input))
 	}
+
+	// TODO: void result if insufficient participation or a troublesome number of
+	// holdouts
 
 	reveals := getRandomPartyBig(stateDB, revealPrefix).Uint64() // approx
 	preimages := make([]byte, common.HashLength*reveals)
