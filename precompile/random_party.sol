@@ -10,6 +10,12 @@ interface RandomPartyInterface {
     function start() external;
 
     // blah
+    function sponsor() payable external;
+
+    // blah
+    function reward() external view returns (uint256);
+
+    // blah
     function commit(bytes32 encoded) payable external returns (uint256);
 
     // blah
