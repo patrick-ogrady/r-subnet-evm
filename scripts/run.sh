@@ -96,7 +96,11 @@ cat <<EOF > /tmp/genesis.json
       "maxBlockGasCost": 10000000,
       "targetBlockRate": 2,
       "blockGasCostStep": 500000
-    }
+    },
+    "randomPartyConfig":{
+      "blockTimestamp":0,
+      "phaseDuration":60,
+    },
   },
   "alloc": {
     "${GENESIS_ADDRESS:2}": {

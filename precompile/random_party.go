@@ -4,6 +4,7 @@
 package precompile
 
 import (
+	"errors"
 	"fmt"
 	"math/big"
 
@@ -35,6 +36,11 @@ var (
 	computeSignature = CalculateFunctionSelector("compute()")
 	resultSignature  = CalculateFunctionSelector("result(uint256)")
 	nextSignature    = CalculateFunctionSelector("next()")
+
+	ErrRandomPartyUnderway  = errors.New("random party underway")
+	ErrNoRandomPartyStarted = errors.New("no random party started")
+	ErrTooLate              = errors.New("too late to interact")
+	ErrTooEarly             = errors.New("too early")
 )
 
 // RandomPartyConfig specifies the configuration of the allow list.
@@ -53,10 +59,15 @@ func (c *RandomPartyConfig) Address() common.Address {
 // Timestamp returns the timestamp at which the allow list should be enabled
 func (c *RandomPartyConfig) Timestamp() *big.Int { return c.BlockTimestamp }
 
+// Make public for tests
+func SetPhaseDuration(state StateDB, duration *big.Int) {
+	setRandomPartyBig(state, phaseDurationKey, duration)
+}
+
 // Configure initializes the address space of [precompileAddr] by initializing the role of each of
 // the addresses in [RandomPartyAdmins].
 func (c *RandomPartyConfig) Configure(state StateDB) {
-	setRandomPartyBig(state, phaseDurationKey, c.PhaseDuration)
+	SetPhaseDuration(state, c.PhaseDuration)
 }
 
 // Contract returns the singleton stateful precompiled contract to be used for
@@ -160,8 +171,7 @@ func startRandomParty(evm PrecompileAccessibleState, callerAddr, addr common.Add
 	stateDB := evm.GetStateDB()
 	commitDeadline := getRandomPartyBig(stateDB, commitDeadlineKey)
 	if commitDeadline.Sign() != 0 {
-		// TODO: Err
-		return nil, remainingGas, fmt.Errorf("random party currently underway")
+		return nil, remainingGas, ErrRandomPartyUnderway
 	}
 
 	if readOnly {
@@ -201,10 +211,10 @@ func commitRandomParty(evm PrecompileAccessibleState, callerAddr, addr common.Ad
 	stateDB := evm.GetStateDB()
 	commitDeadline := getRandomPartyBig(stateDB, commitDeadlineKey)
 	if commitDeadline.Sign() == 0 {
-		return nil, remainingGas, fmt.Errorf("no ongoing party")
+		return nil, remainingGas, ErrNoRandomPartyStarted
 	}
 	if evm.BlockTime().Cmp(commitDeadline) >= 0 {
-		return nil, remainingGas, fmt.Errorf("too late to commit")
+		return nil, remainingGas, ErrTooLate
 	}
 
 	h, err := UnpackCommitRandomParty(input)
@@ -226,12 +236,16 @@ func revealRandomParty(evm PrecompileAccessibleState, callerAddr, addr common.Ad
 	}
 
 	stateDB := evm.GetStateDB()
+	commitDeadline := getRandomPartyBig(stateDB, commitDeadlineKey)
 	revealDeadline := getRandomPartyBig(stateDB, revealDeadlineKey)
-	if revealDeadline.Sign() == 0 {
-		return nil, remainingGas, fmt.Errorf("no ongoing party")
+	if commitDeadline.Sign() == 0 || revealDeadline.Sign() == 0 {
+		return nil, remainingGas, ErrNoRandomPartyStarted
+	}
+	if evm.BlockTime().Cmp(commitDeadline) < 0 {
+		return nil, remainingGas, ErrTooEarly
 	}
 	if evm.BlockTime().Cmp(revealDeadline) >= 0 {
-		return nil, remainingGas, fmt.Errorf("too late to reveal")
+		return nil, remainingGas, ErrTooLate
 	}
 
 	idx, preimage, err := UnpackRevealRandomParty(input)
@@ -260,10 +274,10 @@ func computeRandomParty(evm PrecompileAccessibleState, callerAddr, addr common.A
 	stateDB := evm.GetStateDB()
 	revealDeadline := getRandomPartyBig(stateDB, revealDeadlineKey)
 	if revealDeadline.Sign() == 0 {
-		return nil, remainingGas, fmt.Errorf("no ongoing party")
+		return nil, remainingGas, ErrNoRandomPartyStarted
 	}
 	if evm.BlockTime().Cmp(revealDeadline) < 0 {
-		return nil, remainingGas, fmt.Errorf("too early to compute")
+		return nil, remainingGas, ErrTooEarly
 	}
 
 	if len(input) != 0 {
@@ -317,11 +331,11 @@ func nextRandomParty(evm PrecompileAccessibleState, callerAddr, addr common.Addr
 // createRandomPartyPrecompile returns a StatefulPrecompiledContrac
 func createRandomPartyPrecompile(precompileAddr common.Address) StatefulPrecompiledContract {
 	start := newStatefulPrecompileFunction(startSignature, startRandomParty)
-	commit := newStatefulPrecompileFunction(setAdminSignature, commitRandomParty)
-	reveal := newStatefulPrecompileFunction(setAdminSignature, revealRandomParty)
-	compute := newStatefulPrecompileFunction(setAdminSignature, computeRandomParty)
-	result := newStatefulPrecompileFunction(setAdminSignature, resultRandomParty)
-	next := newStatefulPrecompileFunction(setAdminSignature, nextRandomParty)
+	commit := newStatefulPrecompileFunction(commitSignature, commitRandomParty)
+	reveal := newStatefulPrecompileFunction(revealSignature, revealRandomParty)
+	compute := newStatefulPrecompileFunction(computeSignature, computeRandomParty)
+	result := newStatefulPrecompileFunction(resultSignature, resultRandomParty)
+	next := newStatefulPrecompileFunction(nextSignature, nextRandomParty)
 
 	// Construct the contract with no fallback function.
 	contract := newStatefulPrecompileWithFunctionSelectors(nil, []*statefulPrecompileFunction{start, commit, reveal, compute, result, next})

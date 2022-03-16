@@ -4,6 +4,7 @@
 package core
 
 import (
+	"math/big"
 	"strings"
 	"testing"
 
@@ -17,10 +18,12 @@ import (
 )
 
 type mockAccessibleState struct {
-	state *state.StateDB
+	state     *state.StateDB
+	blockTime *big.Int
 }
 
 func (m *mockAccessibleState) GetStateDB() precompile.StateDB { return m.state }
+func (m *mockAccessibleState) BlockTime() *big.Int            { return m.blockTime }
 
 // This test is added within the core package so that it can import all of the required code
 // without creating any import cycles
@@ -504,6 +507,75 @@ func TestContractNativeMinterRun(t *testing.T) {
 			assert.Equal(t, test.expectedRes, ret)
 
 			test.assertState(t, state)
+		})
+	}
+}
+
+func createNewRandomState(t *testing.T) *state.StateDB {
+	db := rawdb.NewMemoryDatabase()
+	state, err := state.New(common.Hash{}, state.NewDatabase(db), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	precompile.SetPhaseDuration(state, big.NewInt(3))
+	return state
+}
+
+func TestRandomParty(t *testing.T) {
+	anyAddr := common.HexToAddress("0xF60C45c607D0f41687c94C314d300f483661E13a")
+	s := createNewRandomState(t)
+
+	type test struct {
+		resetDB bool
+		btime   *big.Int
+
+		input       func() []byte
+		suppliedGas uint64
+		readOnly    bool
+
+		expectedRes []byte
+		expectedErr string
+	}
+
+	for name, test := range map[string]test{
+		"start party": {
+			btime: big.NewInt(10),
+			input: func() []byte {
+				return precompile.CalculateFunctionSelector("start()")
+			},
+			suppliedGas: precompile.StartGasCost,
+			readOnly:    false,
+			expectedRes: []byte{},
+		},
+		"start party again": {
+			input: func() []byte {
+				return precompile.CalculateFunctionSelector("start()")
+			},
+			suppliedGas: precompile.StartGasCost,
+			readOnly:    false,
+			expectedErr: precompile.ErrRandomPartyUnderway.Error(),
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if test.resetDB {
+				s = createNewRandomState(t)
+			}
+			ret, remainingGas, err := precompile.RandomPartyPrecompile.Run(&mockAccessibleState{blockTime: test.btime, state: s}, anyAddr, precompile.RandomPartyAddress, test.input(), test.suppliedGas, test.readOnly)
+			if len(test.expectedErr) != 0 {
+				if err == nil {
+					assert.Failf(t, "run expectedly passed without error", "expected error %q", test.expectedErr)
+				} else {
+					assert.True(t, strings.Contains(err.Error(), test.expectedErr), "expected error (%s) to contain substring (%s)", err, test.expectedErr)
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			assert.Equal(t, uint64(0), remainingGas)
+			assert.Equal(t, test.expectedRes, ret)
 		})
 	}
 }
