@@ -264,7 +264,7 @@ func commitRandomParty(evm PrecompileAccessibleState, callerAddr, addr common.Ad
 	// Make sure value is sufficient
 	commitFeeAmount := getRandomPartyBig(stateDB, commitFeeKey)
 	if value == nil || value.Cmp(commitFeeAmount) < 0 {
-		return nil, remainingGas, ErrInsufficientFunds
+		return nil, remainingGas, fmt.Errorf("%w: required %d", ErrInsufficientFunds, commitFeeAmount)
 	}
 
 	if readOnly {
