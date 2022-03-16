@@ -564,6 +564,15 @@ func TestRandomParty(t *testing.T) {
 			expectedRes: big.NewInt(0).Bytes(),
 		},
 		{
+			name:  "commit 2",
+			btime: big.NewInt(10),
+			input: func() []byte {
+				return precompile.PackCommitRandomParty(crypto.Keccak256Hash(common.BytesToHash([]byte{0x2}).Bytes()))
+			},
+			suppliedGas: precompile.CommitGasCost,
+			expectedRes: big.NewInt(1).Bytes(),
+		},
+		{
 			name:  "reveal",
 			btime: big.NewInt(10),
 			input: func() []byte {
@@ -633,7 +642,7 @@ func TestRandomParty(t *testing.T) {
 				return precompile.CalculateFunctionSelector("next()")
 			},
 			suppliedGas: precompile.NextCost,
-			expectedRes: common.BytesToHash(big.NewInt(1).Bytes()).Bytes(),
+			expectedRes: big.NewInt(1).Bytes(),
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
