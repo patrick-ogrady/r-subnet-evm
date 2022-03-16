@@ -4,6 +4,7 @@
 package precompile
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"math/big"
@@ -94,12 +95,13 @@ func getRandomPartyBig(state StateDB, key []byte) *big.Int {
 	return new(big.Int).SetBytes(h.Bytes())
 }
 
-func addCounterHash(state StateDB, prefix []byte, hash common.Hash) {
+func addCounterHash(state StateDB, prefix []byte, hash common.Hash) *big.Int {
 	currV := getRandomPartyBig(state, prefix)
 	newV := new(big.Int).Add(currV, common.Big1)
 	setRandomPartyBig(state, prefix, newV)
 	k := append(prefix, currV.Bytes()...)
 	state.SetState(RandomPartyAddress, common.BytesToHash(k), hash)
+	return currV
 }
 
 func getCounterHash(state StateDB, prefix []byte, v *big.Int) common.Hash {
@@ -226,8 +228,8 @@ func commitRandomParty(evm PrecompileAccessibleState, callerAddr, addr common.Ad
 		return nil, remainingGas, vmerrs.ErrWriteProtection
 	}
 
-	addCounterHash(stateDB, commitPrefix, h)
-	return []byte{}, remainingGas, nil
+	idx := addCounterHash(stateDB, commitPrefix, h)
+	return idx.Bytes(), remainingGas, nil
 }
 
 func revealRandomParty(evm PrecompileAccessibleState, callerAddr, addr common.Address, input []byte, suppliedGas uint64, readOnly bool) (ret []byte, remainingGas uint64, err error) {
@@ -253,9 +255,12 @@ func revealRandomParty(evm PrecompileAccessibleState, callerAddr, addr common.Ad
 		return nil, remainingGas, err
 	}
 	h := getCounterHash(stateDB, commitPrefix, idx)
+	if bytes.Compare(h.Bytes(), nil) == 0 {
+		return nil, remainingGas, fmt.Errorf("no hash with index %d", idx)
+	}
 	ch := crypto.Keccak256Hash(preimage.Bytes())
 	if h != ch {
-		return nil, remainingGas, fmt.Errorf("expected %v but got %v", h, ch)
+		return nil, remainingGas, fmt.Errorf("expected %v but got %v (hash %v preimage %v)", h, ch, h, preimage)
 	}
 
 	if readOnly {
@@ -285,7 +290,7 @@ func computeRandomParty(evm PrecompileAccessibleState, callerAddr, addr common.A
 	}
 
 	reveals := getRandomPartyBig(stateDB, revealPrefix).Uint64() // approx
-	preimages := make([]byte, common.HashLength*(reveals-1))
+	preimages := make([]byte, common.HashLength*reveals)
 	for i := uint64(0); i < reveals; i++ {
 		if remainingGas, err = deductGas(remainingGas, ComputeItemCost); err != nil {
 			return nil, 0, err

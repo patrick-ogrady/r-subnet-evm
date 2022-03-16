@@ -14,6 +14,7 @@ import (
 	"github.com/ava-labs/subnet-evm/vmerrs"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/math"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -525,42 +526,118 @@ func TestRandomParty(t *testing.T) {
 	anyAddr := common.HexToAddress("0xF60C45c607D0f41687c94C314d300f483661E13a")
 	s := createNewRandomState(t)
 
-	type test struct {
-		resetDB bool
-		btime   *big.Int
+	for _, test := range []struct {
+		name  string
+		btime *big.Int
 
 		input       func() []byte
 		suppliedGas uint64
-		readOnly    bool
 
 		expectedRes []byte
 		expectedErr string
-	}
-
-	for name, test := range map[string]test{
-		"start party": {
+	}{
+		{
+			name:  "start party",
 			btime: big.NewInt(10),
 			input: func() []byte {
 				return precompile.CalculateFunctionSelector("start()")
 			},
 			suppliedGas: precompile.StartGasCost,
-			readOnly:    false,
 			expectedRes: []byte{},
 		},
-		"start party again": {
+		{
+			name:  "start party again",
+			btime: big.NewInt(10),
 			input: func() []byte {
 				return precompile.CalculateFunctionSelector("start()")
 			},
 			suppliedGas: precompile.StartGasCost,
-			readOnly:    false,
 			expectedErr: precompile.ErrRandomPartyUnderway.Error(),
 		},
+		{
+			name:  "commit",
+			btime: big.NewInt(10),
+			input: func() []byte {
+				return precompile.PackCommitRandomParty(crypto.Keccak256Hash(common.BytesToHash([]byte{0x1}).Bytes()))
+			},
+			suppliedGas: precompile.CommitGasCost,
+			expectedRes: big.NewInt(0).Bytes(),
+		},
+		{
+			name:  "reveal",
+			btime: big.NewInt(10),
+			input: func() []byte {
+				return precompile.PackRevealRandomParty(big.NewInt(0), crypto.Keccak256Hash([]byte{0x1}))
+			},
+			suppliedGas: precompile.RevealGasCost,
+			expectedErr: precompile.ErrTooEarly.Error(),
+		},
+		{
+			name:  "commit later",
+			btime: big.NewInt(14),
+			input: func() []byte {
+				return precompile.PackCommitRandomParty(crypto.Keccak256Hash([]byte{0x1}))
+			},
+			suppliedGas: precompile.CommitGasCost,
+			expectedErr: precompile.ErrTooLate.Error(),
+		},
+		{
+			name:  "reveal later",
+			btime: big.NewInt(14),
+			input: func() []byte {
+				return precompile.PackRevealRandomParty(big.NewInt(0), common.BytesToHash([]byte{0x1}))
+			},
+			suppliedGas: precompile.RevealGasCost,
+			expectedRes: []byte{},
+		},
+		{
+			name:  "compute early",
+			btime: big.NewInt(10),
+			input: func() []byte {
+				return precompile.CalculateFunctionSelector("compute()")
+			},
+			suppliedGas: precompile.ComputeGasCost,
+			expectedErr: precompile.ErrTooEarly.Error(),
+		},
+		{
+			name:  "compute still early",
+			btime: big.NewInt(14),
+			input: func() []byte {
+				return precompile.CalculateFunctionSelector("compute()")
+			},
+			suppliedGas: precompile.ComputeGasCost,
+			expectedErr: precompile.ErrTooEarly.Error(),
+		},
+		{
+			name:  "compute",
+			btime: big.NewInt(20),
+			input: func() []byte {
+				return precompile.CalculateFunctionSelector("compute()")
+			},
+			suppliedGas: precompile.ComputeGasCost + precompile.ComputeItemCost,
+			expectedRes: []byte{},
+		},
+		{
+			name:  "result",
+			btime: big.NewInt(20),
+			input: func() []byte {
+				return precompile.PackResultRandomParty(big.NewInt(0))
+			},
+			suppliedGas: precompile.ResultCost,
+			expectedRes: crypto.Keccak256(common.BytesToHash([]byte{0x1}).Bytes()),
+		},
+		{
+			name:  "next",
+			btime: big.NewInt(20),
+			input: func() []byte {
+				return precompile.CalculateFunctionSelector("next()")
+			},
+			suppliedGas: precompile.NextCost,
+			expectedRes: common.BytesToHash(big.NewInt(1).Bytes()).Bytes(),
+		},
 	} {
-		t.Run(name, func(t *testing.T) {
-			if test.resetDB {
-				s = createNewRandomState(t)
-			}
-			ret, remainingGas, err := precompile.RandomPartyPrecompile.Run(&mockAccessibleState{blockTime: test.btime, state: s}, anyAddr, precompile.RandomPartyAddress, test.input(), test.suppliedGas, test.readOnly)
+		t.Run(test.name, func(t *testing.T) {
+			ret, remainingGas, err := precompile.RandomPartyPrecompile.Run(&mockAccessibleState{blockTime: test.btime, state: s}, anyAddr, precompile.RandomPartyAddress, test.input(), test.suppliedGas, false)
 			if len(test.expectedErr) != 0 {
 				if err == nil {
 					assert.Failf(t, "run expectedly passed without error", "expected error %q", test.expectedErr)

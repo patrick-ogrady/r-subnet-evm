@@ -8,7 +8,7 @@ pragma solidity >=0.8.0;
 interface RandomPartyInterface {
     function start() external;
 
-    function commit(bytes32 encoded) external;
+    function commit(bytes32 encoded) external returns (uint256);
 
     function reveal(uint256 index, bytes32 preimage) external;
 
