@@ -32,6 +32,8 @@ var (
 var (
 	// RandomParty function signatures
 	startSignature   = CalculateFunctionSelector("start()")
+	sponsorSignature = CalculateFunctionSelector("sponsor()")
+	rewardSignature  = CalculateFunctionSelector("reward()")
 	commitSignature  = CalculateFunctionSelector("commit(bytes32)")
 	revealSignature  = CalculateFunctionSelector("reveal(uint256,bytes32)")
 	computeSignature = CalculateFunctionSelector("compute()")
@@ -244,6 +246,53 @@ func startRandomParty(evm PrecompileAccessibleState, callerAddr, addr common.Add
 	return []byte{}, remainingGas, nil
 }
 
+func sponsorRandomParty(evm PrecompileAccessibleState, callerAddr, addr common.Address, input []byte, suppliedGas uint64, value *big.Int, readOnly bool) (ret []byte, remainingGas uint64, err error) {
+	if remainingGas, err = deductGas(suppliedGas, CommitGasCost); err != nil {
+		return nil, 0, err
+	}
+
+	stateDB := evm.GetStateDB()
+	commitDeadline := getRandomPartyBig(stateDB, commitDeadlineKey)
+	if commitDeadline.Sign() == 0 {
+		return nil, remainingGas, ErrNoRandomPartyStarted
+	}
+	if evm.BlockTime().Cmp(commitDeadline) >= 0 {
+		return nil, remainingGas, ErrTooLate
+	}
+
+	h, err := UnpackCommitRandomParty(input)
+	if err != nil {
+		return nil, remainingGas, err
+	}
+
+	// Make sure value is sufficient
+	commitFeeAmount := getRandomPartyBig(stateDB, commitFeeKey)
+	if value == nil || value.Cmp(commitFeeAmount) < 0 {
+		return nil, remainingGas, fmt.Errorf("%w: required %d", ErrInsufficientFunds, commitFeeAmount)
+	}
+
+	if readOnly {
+		return nil, remainingGas, vmerrs.ErrWriteProtection
+	}
+
+	idx := addCounterHash(stateDB, commitPrefix, h)
+	setRandomPartyFeeRecipient(stateDB, idx, callerAddr)
+	return common.BigToHash(idx).Bytes(), remainingGas, nil
+}
+
+func rewardRandomParty(evm PrecompileAccessibleState, callerAddr, addr common.Address, input []byte, suppliedGas uint64, value *big.Int, readOnly bool) (ret []byte, remainingGas uint64, err error) {
+	if remainingGas, err = deductGas(suppliedGas, NextCost); err != nil {
+		return nil, 0, err
+	}
+
+	if len(input) != 0 {
+		return nil, remainingGas, fmt.Errorf("invalid input length for next: %d", len(input))
+	}
+
+	stateDB := evm.GetStateDB()
+	return common.BigToHash(getRandomPartyBig(stateDB, resultPrefix)).Bytes(), remainingGas, nil
+}
+
 func commitRandomParty(evm PrecompileAccessibleState, callerAddr, addr common.Address, input []byte, suppliedGas uint64, value *big.Int, readOnly bool) (ret []byte, remainingGas uint64, err error) {
 	if remainingGas, err = deductGas(suppliedGas, CommitGasCost); err != nil {
 		return nil, 0, err
@@ -401,6 +450,8 @@ func nextRandomParty(evm PrecompileAccessibleState, callerAddr, addr common.Addr
 // createRandomPartyPrecompile returns a StatefulPrecompiledContrac
 func createRandomPartyPrecompile(precompileAddr common.Address) StatefulPrecompiledContract {
 	start := newStatefulPrecompileFunction(startSignature, startRandomParty)
+	sponsor := newStatefulPrecompileFunction(sponsorSignature, sponsorRandomParty)
+	reward := newStatefulPrecompileFunction(rewardSignature, rewardRandomParty)
 	commit := newStatefulPrecompileFunction(commitSignature, commitRandomParty)
 	reveal := newStatefulPrecompileFunction(revealSignature, revealRandomParty)
 	compute := newStatefulPrecompileFunction(computeSignature, computeRandomParty)
@@ -408,6 +459,8 @@ func createRandomPartyPrecompile(precompileAddr common.Address) StatefulPrecompi
 	next := newStatefulPrecompileFunction(nextSignature, nextRandomParty)
 
 	// Construct the contract with no fallback function.
-	contract := newStatefulPrecompileWithFunctionSelectors(nil, []*statefulPrecompileFunction{start, commit, reveal, compute, result, next})
+	contract := newStatefulPrecompileWithFunctionSelectors(nil, []*statefulPrecompileFunction{
+		start, sponsor, reward, commit, reveal, compute, result, next,
+	})
 	return contract
 }
