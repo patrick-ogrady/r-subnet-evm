@@ -35,14 +35,14 @@ var (
 	computeSignature = CalculateFunctionSelector("compute()")
 	resultSignature  = CalculateFunctionSelector("result(uint256)")
 	nextSignature    = CalculateFunctionSelector("next()")
-
-	phaseDuration = big.NewInt(60 * 60) // 1 hour
 )
 
 // RandomPartyConfig specifies the configuration of the allow list.
 // Specifies the block timestamp at which it goes into effect as well as the initial set of allow list admins.
 type RandomPartyConfig struct {
 	BlockTimestamp *big.Int `json:"blockTimestamp"`
+
+	PhaseDuration *big.Int `json:"phaseDuration"` // (seconds) recommend 1 hour
 }
 
 // Address returns the address of the random party contract.
@@ -55,7 +55,9 @@ func (c *RandomPartyConfig) Timestamp() *big.Int { return c.BlockTimestamp }
 
 // Configure initializes the address space of [precompileAddr] by initializing the role of each of
 // the addresses in [RandomPartyAdmins].
-func (c *RandomPartyConfig) Configure(state StateDB) {}
+func (c *RandomPartyConfig) Configure(state StateDB) {
+	setRandomPartyBig(state, phaseDurationKey, c.PhaseDuration)
+}
 
 // Contract returns the singleton stateful precompiled contract to be used for
 // the random party.
@@ -69,6 +71,7 @@ var (
 	commitPrefix      = []byte{0x3}
 	revealPrefix      = []byte{0x4}
 	resultPrefix      = []byte{0x5}
+	phaseDurationKey  = []byte{0x6}
 )
 
 func setRandomPartyBig(state StateDB, key []byte, val *big.Int) {
@@ -167,7 +170,7 @@ func startRandomParty(evm PrecompileAccessibleState, callerAddr, addr common.Add
 
 	commits := getRandomPartyBig(stateDB, commitPrefix).Uint64() // should never have this many commits
 	for i := uint64(0); commits < 0; i++ {
-		if remainingGas, err = deductGas(suppliedGas, DeleteGasCost); err != nil {
+		if remainingGas, err = deductGas(remainingGas, DeleteGasCost); err != nil {
 			return nil, 0, err
 		}
 		deleteCounterHash(stateDB, commitPrefix, new(big.Int).SetUint64(i))
@@ -176,13 +179,14 @@ func startRandomParty(evm PrecompileAccessibleState, callerAddr, addr common.Add
 
 	reveals := getRandomPartyBig(stateDB, revealPrefix).Uint64() // should never have this many commits
 	for i := uint64(0); reveals < 0; i++ {
-		if remainingGas, err = deductGas(suppliedGas, DeleteGasCost); err != nil {
+		if remainingGas, err = deductGas(remainingGas, DeleteGasCost); err != nil {
 			return nil, 0, err
 		}
 		deleteCounterHash(stateDB, revealPrefix, new(big.Int).SetUint64(i))
 	}
 	setRandomPartyBig(stateDB, revealPrefix, common.Big0)
 
+	phaseDuration := getRandomPartyBig(stateDB, phaseDurationKey)
 	commitDeadline = new(big.Int).Add(evm.BlockTime(), phaseDuration)
 	setRandomPartyBig(stateDB, commitDeadlineKey, commitDeadline)
 	setRandomPartyBig(stateDB, revealDeadlineKey, new(big.Int).Add(commitDeadline, phaseDuration))
@@ -269,7 +273,7 @@ func computeRandomParty(evm PrecompileAccessibleState, callerAddr, addr common.A
 	reveals := getRandomPartyBig(stateDB, revealPrefix).Uint64() // approx
 	preimages := make([]byte, common.HashLength*(reveals-1))
 	for i := uint64(0); i < reveals; i++ {
-		if remainingGas, err = deductGas(suppliedGas, ComputeItemCost); err != nil {
+		if remainingGas, err = deductGas(remainingGas, ComputeItemCost); err != nil {
 			return nil, 0, err
 		}
 		copy(preimages[i:i+common.HashLength], getCounterHash(stateDB, revealPrefix, new(big.Int).SetUint64(i)).Bytes())
