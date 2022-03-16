@@ -597,6 +597,15 @@ func TestRandomParty(t *testing.T) {
 			expectedRes: common.BigToHash(big.NewInt(1)).Bytes(),
 		},
 		{
+			name:  "check reward before",
+			btime: big.NewInt(10),
+			input: func() []byte {
+				return precompile.CalculateFunctionSelector("reward()")
+			},
+			suppliedGas: precompile.RewardGasCost,
+			expectedRes: common.BigToHash(common.Big0).Bytes(),
+		},
+		{
 			name:  "reveal",
 			btime: big.NewInt(10),
 			input: func() []byte {
@@ -604,6 +613,25 @@ func TestRandomParty(t *testing.T) {
 			},
 			suppliedGas: precompile.RevealGasCost,
 			expectedErr: precompile.ErrTooEarly.Error(),
+		},
+		{
+			name:  "sponsor",
+			btime: big.NewInt(11),
+			value: big.NewInt(10),
+			input: func() []byte {
+				return precompile.CalculateFunctionSelector("sponsor()")
+			},
+			suppliedGas: precompile.SponsorGasCost,
+			expectedRes: []byte{},
+		},
+		{
+			name:  "check reward after",
+			btime: big.NewInt(10),
+			input: func() []byte {
+				return precompile.CalculateFunctionSelector("reward()")
+			},
+			suppliedGas: precompile.RewardGasCost,
+			expectedRes: common.BigToHash(big.NewInt(10)).Bytes(),
 		},
 		{
 			name:  "commit later",
@@ -656,7 +684,7 @@ func TestRandomParty(t *testing.T) {
 			input: func() []byte {
 				return precompile.CalculateFunctionSelector("compute()")
 			},
-			suppliedGas: precompile.ComputeGasCost + precompile.ComputeItemCost,
+			suppliedGas: precompile.ComputeGasCost + precompile.ComputeItemCost + precompile.ComputeRewardCost,
 			expectedRes: []byte{},
 		},
 		{
@@ -687,6 +715,15 @@ func TestRandomParty(t *testing.T) {
 			expectedErr: precompile.ErrNoRandomPartyStarted.Error(),
 		},
 		{
+			name:  "check reward before next party",
+			btime: big.NewInt(20),
+			input: func() []byte {
+				return precompile.CalculateFunctionSelector("reward()")
+			},
+			suppliedGas: precompile.RewardGasCost,
+			expectedErr: precompile.ErrNoRandomPartyStarted.Error(),
+		},
+		{
 			name:  "start second party",
 			btime: big.NewInt(20),
 			input: func() []byte {
@@ -704,6 +741,15 @@ func TestRandomParty(t *testing.T) {
 			},
 			suppliedGas: precompile.CommitGasCost,
 			expectedRes: common.BigToHash(big.NewInt(0)).Bytes(),
+		},
+		{
+			name:  "check reward later",
+			btime: big.NewInt(21),
+			input: func() []byte {
+				return precompile.CalculateFunctionSelector("reward()")
+			},
+			suppliedGas: precompile.RewardGasCost,
+			expectedRes: common.BigToHash(common.Big0).Bytes(),
 		},
 		{
 			name:  "reveal old key",

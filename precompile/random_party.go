@@ -405,9 +405,13 @@ func computeRandomParty(evm PrecompileAccessibleState, callerAddr, addr common.A
 
 	reveals := getRandomPartyBig(stateDB, revealPrefix)
 	rewardAmount := getRandomPartyBig(stateDB, rewardPrefix)
-	eachRewardAmount := new(big.Int).Div(rewardAmount, reveals)
-	shouldReward := eachRewardAmount.Sign() > 0
+	eachRewardAmount := common.Big0
+	shouldReward := false
 	ri := reveals.Uint64()
+	if ri > 0 && rewardAmount.Sign() > 0 {
+		eachRewardAmount = new(big.Int).Div(rewardAmount, reveals)
+		shouldReward = true
+	}
 	preimages := make([]byte, common.HashLength*ri)
 	for i := uint64(0); i < ri; i++ {
 		if remainingGas, err = deductGas(remainingGas, ComputeItemCost); err != nil {
@@ -433,6 +437,7 @@ func computeRandomParty(evm PrecompileAccessibleState, callerAddr, addr common.A
 
 	setRandomPartyBig(stateDB, commitDeadlineKey, common.Big0)
 	setRandomPartyBig(stateDB, revealDeadlineKey, common.Big0)
+	setRandomPartyBig(stateDB, rewardPrefix, common.Big0)
 	addResultHash(stateDB, crypto.Keccak256Hash(preimages))
 	return []byte{}, remainingGas, nil
 }
