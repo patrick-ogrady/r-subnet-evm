@@ -537,6 +537,15 @@ func TestRandomParty(t *testing.T) {
 		expectedErr string
 	}{
 		{
+			name:  "next",
+			btime: big.NewInt(0),
+			input: func() []byte {
+				return precompile.CalculateFunctionSelector("next()")
+			},
+			suppliedGas: precompile.NextCost,
+			expectedRes: big.NewInt(0).Bytes(),
+		},
+		{
 			name:  "start party",
 			btime: big.NewInt(10),
 			input: func() []byte {
@@ -688,6 +697,24 @@ func TestRandomParty(t *testing.T) {
 			},
 			suppliedGas: precompile.StartGasCost + precompile.DeleteGasCost,
 			expectedErr: precompile.ErrRandomPartyUnderway.Error(),
+		},
+		{
+			name:  "compute old party",
+			btime: big.NewInt(40),
+			input: func() []byte {
+				return precompile.CalculateFunctionSelector("compute()")
+			},
+			suppliedGas: precompile.ComputeGasCost,
+			expectedRes: []byte{},
+		},
+		{
+			name:  "next after reset",
+			btime: big.NewInt(100),
+			input: func() []byte {
+				return precompile.CalculateFunctionSelector("next()")
+			},
+			suppliedGas: precompile.NextCost,
+			expectedRes: big.NewInt(2).Bytes(),
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {

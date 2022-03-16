@@ -31,8 +31,8 @@ var (
 var (
 	// RandomParty function signatures
 	startSignature   = CalculateFunctionSelector("start()")
-	commitSignature  = CalculateFunctionSelector("commit(hash)")
-	revealSignature  = CalculateFunctionSelector("reveal(uint256,hash)")
+	commitSignature  = CalculateFunctionSelector("commit(bytes32)")
+	revealSignature  = CalculateFunctionSelector("reveal(uint256,bytes32)")
 	computeSignature = CalculateFunctionSelector("compute()")
 	resultSignature  = CalculateFunctionSelector("result(uint256)")
 	nextSignature    = CalculateFunctionSelector("next()")
