@@ -12,14 +12,17 @@ const (
 
 	MintGasCost = 30_000
 
-	StartGasCost    = 50_000
-	DeleteGasCost   = 1_000
-	CommitGasCost   = 10_000
-	RevealGasCost   = 10_000
-	ComputeGasCost  = 100_000
-	ComputeItemCost = 1_000
-	ResultCost      = 5_000
-	NextCost        = 5_000
+	StartGasCost      = 50_000
+	DeleteGasCost     = 1_000
+	SponsorGasCost    = 10_000
+	RewardGasCost     = 5_000
+	CommitGasCost     = 10_000
+	RevealGasCost     = 10_000
+	ComputeGasCost    = 100_000
+	ComputeItemCost   = 3_000
+	ComputeRewardCost = 3_000
+	ResultCost        = 5_000
+	NextCost          = 5_000
 )
 
 // Designated addresses of stateful precompiles
