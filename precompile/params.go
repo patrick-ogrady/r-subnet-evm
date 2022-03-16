@@ -18,6 +18,8 @@ const (
 	RevealGasCost   = 10_000
 	ComputeGasCost  = 100_000
 	ComputeItemCost = 1_000
+	ResultCost      = 5_000
+	NextCost        = 5_000
 )
 
 // Designated addresses of stateful precompiles

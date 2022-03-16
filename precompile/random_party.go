@@ -4,7 +4,6 @@
 package precompile
 
 import (
-	"bytes"
 	"fmt"
 	"math/big"
 
@@ -284,14 +283,41 @@ func computeRandomParty(evm PrecompileAccessibleState, callerAddr, addr common.A
 	return []byte{}, remainingGas, nil
 }
 
+func resultRandomParty(evm PrecompileAccessibleState, callerAddr, addr common.Address, input []byte, suppliedGas uint64, readOnly bool) (ret []byte, remainingGas uint64, err error) {
+	if remainingGas, err = deductGas(suppliedGas, ResultCost); err != nil {
+		return nil, 0, err
+	}
+
+	stateDB := evm.GetStateDB()
+	round, err := UnpackResultRandomParty(input)
+	if err != nil {
+		return nil, remainingGas, err
+	}
+
+	return getResultHash(stateDB, round).Bytes(), remainingGas, nil
+}
+
+func nextRandomParty(evm PrecompileAccessibleState, callerAddr, addr common.Address, input []byte, suppliedGas uint64, readOnly bool) (ret []byte, remainingGas uint64, err error) {
+	if remainingGas, err = deductGas(suppliedGas, NextCost); err != nil {
+		return nil, 0, err
+	}
+
+	if len(input) != 0 {
+		return nil, remainingGas, fmt.Errorf("invalid input length for next: %d", len(input))
+	}
+
+	stateDB := evm.GetStateDB()
+	return getRandomPartyBig(stateDB, resultPrefix).Bytes(), remainingGas, nil
+}
+
 // createRandomPartyPrecompile returns a StatefulPrecompiledContrac
 func createRandomPartyPrecompile(precompileAddr common.Address) StatefulPrecompiledContract {
 	start := newStatefulPrecompileFunction(startSignature, startRandomParty)
 	commit := newStatefulPrecompileFunction(setAdminSignature, commitRandomParty)
 	reveal := newStatefulPrecompileFunction(setAdminSignature, revealRandomParty)
 	compute := newStatefulPrecompileFunction(setAdminSignature, computeRandomParty)
-	result := newStatefulPrecompileFunction(setAdminSignature, createRandomPartyStageSetter(precompileAddr, RandomPartyAdmin))
-	next := newStatefulPrecompileFunction(setAdminSignature, createRandomPartyStageSetter(precompileAddr, RandomPartyAdmin))
+	result := newStatefulPrecompileFunction(setAdminSignature, resultRandomParty)
+	next := newStatefulPrecompileFunction(setAdminSignature, nextRandomParty)
 
 	// Construct the contract with no fallback function.
 	contract := newStatefulPrecompileWithFunctionSelectors(nil, []*statefulPrecompileFunction{start, commit, reveal, compute, result, next})
