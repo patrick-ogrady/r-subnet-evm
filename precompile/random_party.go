@@ -43,6 +43,7 @@ var (
 	ErrNoRandomPartyStarted = errors.New("no random party started")
 	ErrTooLate              = errors.New("too late to interact")
 	ErrTooEarly             = errors.New("too early")
+	ErrDuplicateReveal      = errors.New("duplicate reveal")
 )
 
 // RandomPartyConfig specifies the configuration of the allow list.
@@ -234,8 +235,7 @@ func commitRandomParty(evm PrecompileAccessibleState, callerAddr, addr common.Ad
 		return nil, remainingGas, vmerrs.ErrWriteProtection
 	}
 
-	idx := addCounterHash(stateDB, commitPrefix, h)
-	return idx.Bytes(), remainingGas, nil
+	return common.BigToHash(addCounterHash(stateDB, commitPrefix, h)).Bytes(), remainingGas, nil
 }
 
 func revealRandomParty(evm PrecompileAccessibleState, callerAddr, addr common.Address, input []byte, suppliedGas uint64, readOnly bool) (ret []byte, remainingGas uint64, err error) {
@@ -265,6 +265,9 @@ func revealRandomParty(evm PrecompileAccessibleState, callerAddr, addr common.Ad
 		return nil, remainingGas, fmt.Errorf("no hash with index %d", idx)
 	}
 	h := getCounterHash(stateDB, commitPrefix, idx)
+	if h.Big().Sign() == 0 {
+		return nil, remainingGas, ErrDuplicateReveal
+	}
 	ch := crypto.Keccak256Hash(preimage.Bytes())
 	if h != ch {
 		return nil, remainingGas, fmt.Errorf("expected %v but got %v (hash %v preimage %v)", h, ch, h, preimage)
@@ -274,6 +277,7 @@ func revealRandomParty(evm PrecompileAccessibleState, callerAddr, addr common.Ad
 		return nil, remainingGas, vmerrs.ErrWriteProtection
 	}
 
+	deleteCounterHash(stateDB, commitPrefix, idx) // prevent duplicate reveals
 	addCounterHash(stateDB, revealPrefix, preimage)
 	return []byte{}, remainingGas, nil
 }
@@ -339,7 +343,7 @@ func nextRandomParty(evm PrecompileAccessibleState, callerAddr, addr common.Addr
 	}
 
 	stateDB := evm.GetStateDB()
-	return getRandomPartyBig(stateDB, resultPrefix).Bytes(), remainingGas, nil
+	return common.BigToHash(getRandomPartyBig(stateDB, resultPrefix)).Bytes(), remainingGas, nil
 }
 
 // createRandomPartyPrecompile returns a StatefulPrecompiledContrac
