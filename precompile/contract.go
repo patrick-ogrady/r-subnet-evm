@@ -14,7 +14,7 @@ const (
 	selectorLen = 4
 )
 
-type RunStatefulPrecompileFunc func(accessibleState PrecompileAccessibleState, caller common.Address, addr common.Address, input []byte, suppliedGas uint64, readOnly bool) (ret []byte, remainingGas uint64, err error)
+type RunStatefulPrecompileFunc func(accessibleState PrecompileAccessibleState, caller common.Address, addr common.Address, input []byte, suppliedGas uint64, value *big.Int, readOnly bool) (ret []byte, remainingGas uint64, err error)
 
 // PrecompileAccessibleState defines the interface exposed to stateful precompile contracts
 type PrecompileAccessibleState interface {
@@ -43,7 +43,7 @@ type StateDB interface {
 // StatefulPrecompiledContract is the interface for executing a precompiled contract
 type StatefulPrecompiledContract interface {
 	// Run executes the precompiled contract.
-	Run(accessibleState PrecompileAccessibleState, caller common.Address, addr common.Address, input []byte, suppliedGas uint64, readOnly bool) (ret []byte, remainingGas uint64, err error)
+	Run(accessibleState PrecompileAccessibleState, caller common.Address, addr common.Address, input []byte, suppliedGas uint64, value *big.Int, readOnly bool) (ret []byte, remainingGas uint64, err error)
 }
 
 // statefulPrecompileFunction defines a function implemented by a stateful precompile
@@ -97,10 +97,10 @@ func newStatefulPrecompileWithFunctionSelectors(fallback *statefulPrecompileFunc
 
 // Run selects the function using the 4 byte function selector at the start of the input and executes the underlying function on the
 // given arguments.
-func (s *statefulPrecompileWithFunctionSelectors) Run(accessibleState PrecompileAccessibleState, caller common.Address, addr common.Address, input []byte, suppliedGas uint64, readOnly bool) (ret []byte, remainingGas uint64, err error) {
+func (s *statefulPrecompileWithFunctionSelectors) Run(accessibleState PrecompileAccessibleState, caller common.Address, addr common.Address, input []byte, suppliedGas uint64, value *big.Int, readOnly bool) (ret []byte, remainingGas uint64, err error) {
 	// If there is no input data present, call the fallback function if present.
 	if len(input) == 0 && s.fallback != nil {
-		return s.fallback.execute(accessibleState, caller, addr, nil, suppliedGas, readOnly)
+		return s.fallback.execute(accessibleState, caller, addr, nil, suppliedGas, value, readOnly)
 	}
 
 	// Otherwise, an unexpected input size will result in an error.
@@ -116,5 +116,5 @@ func (s *statefulPrecompileWithFunctionSelectors) Run(accessibleState Precompile
 		return nil, suppliedGas, fmt.Errorf("invalid function selector %#x", selector)
 	}
 
-	return function.execute(accessibleState, caller, addr, functionInput, suppliedGas, readOnly)
+	return function.execute(accessibleState, caller, addr, functionInput, suppliedGas, value, readOnly)
 }

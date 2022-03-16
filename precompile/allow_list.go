@@ -142,7 +142,7 @@ func PackReadAllowList(address common.Address) []byte {
 // createAllowListRoleSetter returns an execution function for setting the allow list status of the input address argument to [role].
 // This execution function is speciifc to [precompileAddr].
 func createAllowListRoleSetter(precompileAddr common.Address, role AllowListRole) RunStatefulPrecompileFunc {
-	return func(evm PrecompileAccessibleState, callerAddr, addr common.Address, input []byte, suppliedGas uint64, readOnly bool) (ret []byte, remainingGas uint64, err error) {
+	return func(evm PrecompileAccessibleState, callerAddr, addr common.Address, input []byte, suppliedGas uint64, value *big.Int, readOnly bool) (ret []byte, remainingGas uint64, err error) {
 		if remainingGas, err = deductGas(suppliedGas, ModifyAllowListGasCost); err != nil {
 			return nil, 0, err
 		}
@@ -173,7 +173,7 @@ func createAllowListRoleSetter(precompileAddr common.Address, role AllowListRole
 // The execution function parses the input into a single address and returns the 32 byte hash that specifies the
 // designated role of that address
 func createReadAllowList(precompileAddr common.Address) RunStatefulPrecompileFunc {
-	return func(evm PrecompileAccessibleState, callerAddr common.Address, addr common.Address, input []byte, suppliedGas uint64, readOnly bool) (ret []byte, remainingGas uint64, err error) {
+	return func(evm PrecompileAccessibleState, callerAddr common.Address, addr common.Address, input []byte, suppliedGas uint64, value *big.Int, readOnly bool) (ret []byte, remainingGas uint64, err error) {
 		if remainingGas, err = deductGas(suppliedGas, ReadAllowListGasCost); err != nil {
 			return nil, 0, err
 		}

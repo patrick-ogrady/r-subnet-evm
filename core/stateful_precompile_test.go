@@ -240,7 +240,7 @@ func TestContractDeployerAllowListRun(t *testing.T) {
 			precompile.SetContractDeployerAllowListStatus(state, adminAddr, precompile.AllowListAdmin)
 			precompile.SetContractDeployerAllowListStatus(state, noRoleAddr, precompile.AllowListNoRole)
 
-			ret, remainingGas, err := precompile.ContractDeployerAllowListPrecompile.Run(&mockAccessibleState{state: state}, test.caller, test.precompileAddr, test.input(), test.suppliedGas, test.readOnly)
+			ret, remainingGas, err := precompile.ContractDeployerAllowListPrecompile.Run(&mockAccessibleState{state: state}, test.caller, test.precompileAddr, test.input(), test.suppliedGas, nil, test.readOnly)
 			if len(test.expectedErr) != 0 {
 				if err == nil {
 					assert.Failf(t, "run expectedly passed without error", "expected error %q", test.expectedErr)
@@ -490,7 +490,7 @@ func TestContractNativeMinterRun(t *testing.T) {
 			precompile.SetContractNativeMinterStatus(state, allowAddr, precompile.AllowListEnabled)
 			precompile.SetContractNativeMinterStatus(state, noRoleAddr, precompile.AllowListNoRole)
 
-			ret, remainingGas, err := precompile.ContractNativeMinterPrecompile.Run(&mockAccessibleState{state: state}, test.caller, test.precompileAddr, test.input(), test.suppliedGas, test.readOnly)
+			ret, remainingGas, err := precompile.ContractNativeMinterPrecompile.Run(&mockAccessibleState{state: state}, test.caller, test.precompileAddr, test.input(), test.suppliedGas, nil, test.readOnly)
 			if len(test.expectedErr) != 0 {
 				if err == nil {
 					assert.Failf(t, "run expectedly passed without error", "expected error %q", test.expectedErr)
@@ -534,6 +534,7 @@ func TestRandomParty(t *testing.T) {
 
 		input       func() []byte
 		suppliedGas uint64
+		value       *big.Int
 
 		expectedRes []byte
 		expectedErr string
@@ -568,6 +569,7 @@ func TestRandomParty(t *testing.T) {
 		{
 			name:  "commit",
 			btime: big.NewInt(10),
+			value: big.NewInt(1000),
 			input: func() []byte {
 				return precompile.PackCommitRandomParty(crypto.Keccak256Hash(common.BytesToHash([]byte{0x1}).Bytes()))
 			},
@@ -577,8 +579,8 @@ func TestRandomParty(t *testing.T) {
 		{
 			name:  "commit insufficient",
 			btime: big.NewInt(10),
+			value: big.NewInt(999),
 			input: func() []byte {
-				s.SetBalance(anyAddr, common.Big0)
 				return precompile.PackCommitRandomParty(crypto.Keccak256Hash(common.BytesToHash([]byte{0x2}).Bytes()))
 			},
 			suppliedGas: precompile.CommitGasCost,
@@ -587,8 +589,8 @@ func TestRandomParty(t *testing.T) {
 		{
 			name:  "commit 2",
 			btime: big.NewInt(10),
+			value: big.NewInt(1001),
 			input: func() []byte {
-				s.SetBalance(anyAddr, big.NewInt(10000))
 				return precompile.PackCommitRandomParty(crypto.Keccak256Hash(common.BytesToHash([]byte{0x2}).Bytes()))
 			},
 			suppliedGas: precompile.CommitGasCost,
@@ -696,6 +698,7 @@ func TestRandomParty(t *testing.T) {
 		{
 			name:  "commit second party",
 			btime: big.NewInt(20),
+			value: big.NewInt(1001),
 			input: func() []byte {
 				return precompile.PackCommitRandomParty(crypto.Keccak256Hash(common.BytesToHash([]byte{0x1}).Bytes()))
 			},
@@ -740,7 +743,7 @@ func TestRandomParty(t *testing.T) {
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			ret, remainingGas, err := precompile.RandomPartyPrecompile.Run(&mockAccessibleState{blockTime: test.btime, state: s}, anyAddr, precompile.RandomPartyAddress, test.input(), test.suppliedGas, false)
+			ret, remainingGas, err := precompile.RandomPartyPrecompile.Run(&mockAccessibleState{blockTime: test.btime, state: s}, anyAddr, precompile.RandomPartyAddress, test.input(), test.suppliedGas, test.value, false)
 			if len(test.expectedErr) != 0 {
 				if err == nil {
 					assert.Failf(t, "run unexpectedly passed without error", "expected error %q", test.expectedErr)

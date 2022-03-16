@@ -10,7 +10,7 @@ interface RandomPartyInterface {
     function start() external;
 
     // blah
-    function commit(bytes32 encoded) external returns (uint256);
+    function commit(bytes32 encoded) payable external returns (uint256);
 
     // blah
     function reveal(uint256 index, bytes32 preimage) external;

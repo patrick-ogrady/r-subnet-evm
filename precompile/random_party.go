@@ -15,7 +15,8 @@ import (
 
 // -> Start() => commitDeadline=time+1 hour/revealDeadline=time+2 hour; del commits; del reveals; commits=0; reveals=0
 // < Commit Deadline (if 0, no ongoing)
-// -> Commit(hash) => com1=hash;commits=1
+// -> Commit(hash) => com1=hash;commits=1 [also deducts commitFee but MM
+// doesn't reflect]
 // < Reveal Deadline
 // -> Reveal(num,preimage) =>rev1=preimage;reveals=1;
 // -> Compute() => roundX=result;commitDeadline=0;revealDeadline=0;
@@ -195,7 +196,7 @@ func UnpackResultRandomParty(input []byte) (*big.Int, error) {
 	return new(big.Int).SetBytes(input), nil
 }
 
-func startRandomParty(evm PrecompileAccessibleState, callerAddr, addr common.Address, input []byte, suppliedGas uint64, readOnly bool) (ret []byte, remainingGas uint64, err error) {
+func startRandomParty(evm PrecompileAccessibleState, callerAddr, addr common.Address, input []byte, suppliedGas uint64, value *big.Int, readOnly bool) (ret []byte, remainingGas uint64, err error) {
 	if remainingGas, err = deductGas(suppliedGas, StartGasCost); err != nil {
 		return nil, 0, err
 	}
@@ -241,7 +242,7 @@ func startRandomParty(evm PrecompileAccessibleState, callerAddr, addr common.Add
 	return []byte{}, remainingGas, nil
 }
 
-func commitRandomParty(evm PrecompileAccessibleState, callerAddr, addr common.Address, input []byte, suppliedGas uint64, readOnly bool) (ret []byte, remainingGas uint64, err error) {
+func commitRandomParty(evm PrecompileAccessibleState, callerAddr, addr common.Address, input []byte, suppliedGas uint64, value *big.Int, readOnly bool) (ret []byte, remainingGas uint64, err error) {
 	if remainingGas, err = deductGas(suppliedGas, CommitGasCost); err != nil {
 		return nil, 0, err
 	}
@@ -260,22 +261,22 @@ func commitRandomParty(evm PrecompileAccessibleState, callerAddr, addr common.Ad
 		return nil, remainingGas, err
 	}
 
+	// Make sure value is sufficient
 	commitFeeAmount := getRandomPartyBig(stateDB, commitFeeKey)
-	if stateDB.GetBalance(callerAddr).Cmp(commitFeeAmount) < 0 {
+	if value == nil || value.Cmp(commitFeeAmount) < 0 {
 		return nil, remainingGas, ErrInsufficientFunds
 	}
 
 	if readOnly {
 		return nil, remainingGas, vmerrs.ErrWriteProtection
 	}
-	idx := addCounterHash(stateDB, commitPrefix, h)
 
-	stateDB.SubBalance(callerAddr, commitFeeAmount)
+	idx := addCounterHash(stateDB, commitPrefix, h)
 	setRandomPartyFeeRecipient(stateDB, idx, callerAddr)
 	return common.BigToHash(idx).Bytes(), remainingGas, nil
 }
 
-func revealRandomParty(evm PrecompileAccessibleState, callerAddr, addr common.Address, input []byte, suppliedGas uint64, readOnly bool) (ret []byte, remainingGas uint64, err error) {
+func revealRandomParty(evm PrecompileAccessibleState, callerAddr, addr common.Address, input []byte, suppliedGas uint64, value *big.Int, readOnly bool) (ret []byte, remainingGas uint64, err error) {
 	if remainingGas, err = deductGas(suppliedGas, RevealGasCost); err != nil {
 		return nil, 0, err
 	}
@@ -328,7 +329,7 @@ func revealRandomParty(evm PrecompileAccessibleState, callerAddr, addr common.Ad
 	return []byte{}, remainingGas, nil
 }
 
-func computeRandomParty(evm PrecompileAccessibleState, callerAddr, addr common.Address, input []byte, suppliedGas uint64, readOnly bool) (ret []byte, remainingGas uint64, err error) {
+func computeRandomParty(evm PrecompileAccessibleState, callerAddr, addr common.Address, input []byte, suppliedGas uint64, value *big.Int, readOnly bool) (ret []byte, remainingGas uint64, err error) {
 	if remainingGas, err = deductGas(suppliedGas, ComputeGasCost); err != nil {
 		return nil, 0, err
 	}
@@ -365,7 +366,7 @@ func computeRandomParty(evm PrecompileAccessibleState, callerAddr, addr common.A
 	return []byte{}, remainingGas, nil
 }
 
-func resultRandomParty(evm PrecompileAccessibleState, callerAddr, addr common.Address, input []byte, suppliedGas uint64, readOnly bool) (ret []byte, remainingGas uint64, err error) {
+func resultRandomParty(evm PrecompileAccessibleState, callerAddr, addr common.Address, input []byte, suppliedGas uint64, value *big.Int, readOnly bool) (ret []byte, remainingGas uint64, err error) {
 	if remainingGas, err = deductGas(suppliedGas, ResultCost); err != nil {
 		return nil, 0, err
 	}
@@ -379,7 +380,7 @@ func resultRandomParty(evm PrecompileAccessibleState, callerAddr, addr common.Ad
 	return getResultHash(stateDB, round).Bytes(), remainingGas, nil
 }
 
-func nextRandomParty(evm PrecompileAccessibleState, callerAddr, addr common.Address, input []byte, suppliedGas uint64, readOnly bool) (ret []byte, remainingGas uint64, err error) {
+func nextRandomParty(evm PrecompileAccessibleState, callerAddr, addr common.Address, input []byte, suppliedGas uint64, value *big.Int, readOnly bool) (ret []byte, remainingGas uint64, err error) {
 	if remainingGas, err = deductGas(suppliedGas, NextCost); err != nil {
 		return nil, 0, err
 	}
