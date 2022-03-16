@@ -38,6 +38,8 @@ var (
 	resultSignature  = CalculateFunctionSelector("result(uint256)")
 	nextSignature    = CalculateFunctionSelector("next()")
 
+	delim = byte('/')
+
 	ErrRandomPartyUnderway  = errors.New("random party underway")
 	ErrNoRandomPartyStarted = errors.New("no random party started")
 	ErrTooLate              = errors.New("too late to interact")
@@ -99,18 +101,21 @@ func addCounterHash(state StateDB, prefix []byte, hash common.Hash) *big.Int {
 	currV := getRandomPartyBig(state, prefix)
 	newV := new(big.Int).Add(currV, common.Big1)
 	setRandomPartyBig(state, prefix, newV)
-	k := append(prefix, currV.Bytes()...)
+	k := append(prefix, delim)
+	k = append(k, currV.Bytes()...)
 	state.SetState(RandomPartyAddress, common.BytesToHash(k), hash)
 	return currV
 }
 
 func getCounterHash(state StateDB, prefix []byte, v *big.Int) common.Hash {
-	k := append(prefix, v.Bytes()...)
+	k := append(prefix, delim)
+	k = append(k, v.Bytes()...)
 	return state.GetState(RandomPartyAddress, common.BytesToHash(k))
 }
 
 func deleteCounterHash(state StateDB, prefix []byte, v *big.Int) {
-	k := append(prefix, v.Bytes()...)
+	k := append(prefix, delim)
+	k = append(k, v.Bytes()...)
 	state.SetState(RandomPartyAddress, common.BytesToHash(k), common.Hash{})
 }
 
@@ -118,12 +123,14 @@ func addResultHash(state StateDB, value common.Hash) {
 	currV := getRandomPartyBig(state, resultPrefix)
 	newV := new(big.Int).Add(currV, common.Big1)
 	setRandomPartyBig(state, resultPrefix, newV)
-	k := append(resultPrefix, currV.Bytes()...)
+	k := append(resultPrefix, delim)
+	k = append(k, currV.Bytes()...)
 	state.SetState(RandomPartyAddress, common.BytesToHash(k), value)
 }
 
 func getResultHash(state StateDB, round *big.Int) common.Hash {
-	k := append(resultPrefix, round.Bytes()...)
+	k := append(resultPrefix, delim)
+	k = append(k, round.Bytes()...)
 	return state.GetState(RandomPartyAddress, common.BytesToHash(k))
 }
 
