@@ -201,6 +201,11 @@ func (evm *EVM) GetStateDB() precompile.StateDB {
 	return evm.StateDB
 }
 
+// BlockTime returns the evm's context time
+func (evm *EVM) BlockTime() *big.Int {
+	return evm.Context.Time
+}
+
 // Interpreter returns the current interpreter
 func (evm *EVM) Interpreter() *EVMInterpreter {
 	return evm.interpreter

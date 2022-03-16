@@ -4,11 +4,13 @@
 package precompile
 
 import (
+	"bytes"
 	"fmt"
 	"math/big"
 
 	"github.com/ava-labs/subnet-evm/vmerrs"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/crypto"
 )
 
 // -> Start() => commitDeadline=time+1 hour/revealDeadline=time+2 hour; del commits; del reveals; commits=0; reveals=0
@@ -28,12 +30,14 @@ var (
 
 var (
 	// RandomParty function signatures
-	startSignature     = CalculateFunctionSelector("start()")
-	commitSignature    = CalculateFunctionSelector("commit(hash)")
-	revealSignature    = CalculateFunctionSelector("reveal(uint256,hash)")
-	computeSignature   = CalculateFunctionSelector("compute()")
-	resultSignature    = CalculateFunctionSelector("result(uint256)")
-	completedSignature = CalculateFunctionSelector("completed()")
+	startSignature   = CalculateFunctionSelector("start()")
+	commitSignature  = CalculateFunctionSelector("commit(hash)")
+	revealSignature  = CalculateFunctionSelector("reveal(uint256,hash)")
+	computeSignature = CalculateFunctionSelector("compute()")
+	resultSignature  = CalculateFunctionSelector("result(uint256)")
+	nextSignature    = CalculateFunctionSelector("next()")
+
+	phaseDuration = big.NewInt(60 * 60) // 1 hour
 )
 
 // RandomPartyConfig specifies the configuration of the allow list.
@@ -66,7 +70,6 @@ var (
 	commitPrefix      = []byte{0x3}
 	revealPrefix      = []byte{0x4}
 	resultPrefix      = []byte{0x5}
-	completedKey      = []byte{0x6}
 )
 
 func setRandomPartyBig(state StateDB, key []byte, val *big.Int) {
@@ -96,8 +99,11 @@ func deleteCounterHash(state StateDB, prefix []byte, v *big.Int) {
 	state.SetState(RandomPartyAddress, common.BytesToHash(k), common.Hash{})
 }
 
-func addResultHash(state StateDB, round *big.Int, value common.Hash) {
-	k := append(resultPrefix, round.Bytes()...)
+func addResultHash(state StateDB, value common.Hash) {
+	currV := getRandomPartyBig(state, resultPrefix)
+	newV := new(big.Int).Add(currV, common.Big1)
+	setRandomPartyBig(state, resultPrefix, newV)
+	k := append(resultPrefix, currV.Bytes()...)
 	state.SetState(RandomPartyAddress, common.BytesToHash(k), value)
 }
 
@@ -140,64 +146,154 @@ func UnpackResultRandomParty(input []byte) (*big.Int, error) {
 	return new(big.Int).SetBytes(input), nil
 }
 
-// createRandomPartyStageSetter returns an execution function for setting the allow list status of the input address argument to [role].
-// This execution function is speciifc to [precompileAddr].
-func createRandomPartyStageSetter(precompileAddr common.Address, role RandomPartyStage) RunStatefulPrecompileFunc {
-	return func(evm PrecompileAccessibleState, callerAddr, addr common.Address, input []byte, suppliedGas uint64, readOnly bool) (ret []byte, remainingGas uint64, err error) {
-		if remainingGas, err = deductGas(suppliedGas, ModifyRandomPartyGasCost); err != nil {
+func startRandomParty(evm PrecompileAccessibleState, callerAddr, addr common.Address, input []byte, suppliedGas uint64, readOnly bool) (ret []byte, remainingGas uint64, err error) {
+	if remainingGas, err = deductGas(suppliedGas, StartGasCost); err != nil {
+		return nil, 0, err
+	}
+
+	if len(input) != 0 {
+		return nil, remainingGas, fmt.Errorf("invalid input length for start: %d", len(input))
+	}
+
+	stateDB := evm.GetStateDB()
+	commitDeadline := getRandomPartyBig(stateDB, commitDeadlineKey)
+	if commitDeadline.Sign() != 0 {
+		// TODO: Err
+		return nil, remainingGas, fmt.Errorf("random party currently underway")
+	}
+
+	if readOnly {
+		return nil, remainingGas, vmerrs.ErrWriteProtection
+	}
+
+	commits := getRandomPartyBig(stateDB, commitPrefix).Uint64() // should never have this many commits
+	for i := uint64(0); commits < 0; i++ {
+		if remainingGas, err = deductGas(suppliedGas, DeleteGasCost); err != nil {
 			return nil, 0, err
 		}
-
-		if len(input) != allowListInputLen {
-			return nil, remainingGas, fmt.Errorf("invalid input length for modifying allow list: %d", len(input))
-		}
-
-		modifyAddress := common.BytesToAddress(input)
-
-		if readOnly {
-			return nil, remainingGas, vmerrs.ErrWriteProtection
-		}
-
-		// Verify that the caller is in the allow list and therefore has the right to modify it
-		callerStatus := getRandomPartyStatus(evm.GetStateDB(), precompileAddr, callerAddr)
-		if !callerStatus.IsAdmin() {
-			return nil, remainingGas, fmt.Errorf("%w: %s", ErrCannotModifyRandomParty, callerAddr)
-		}
-
-		setRandomPartyStage(evm.GetStateDB(), precompileAddr, modifyAddress, role)
-		// Return an empty output and the remaining gas
-		return []byte{}, remainingGas, nil
+		deleteCounterHash(stateDB, commitPrefix, new(big.Int).SetUint64(i))
 	}
-}
+	setRandomPartyBig(stateDB, commitPrefix, common.Big0)
 
-// createReadRandomParty returns an execution function that reads the allow list for the given [precompileAddr].
-// The execution function parses the input into a single address and returns the 32 byte hash that specifies the
-// designated role of that address
-func createReadRandomParty(precompileAddr common.Address) RunStatefulPrecompileFunc {
-	return func(evm PrecompileAccessibleState, callerAddr common.Address, addr common.Address, input []byte, suppliedGas uint64, readOnly bool) (ret []byte, remainingGas uint64, err error) {
-		if remainingGas, err = deductGas(suppliedGas, ReadRandomPartyGasCost); err != nil {
+	reveals := getRandomPartyBig(stateDB, revealPrefix).Uint64() // should never have this many commits
+	for i := uint64(0); reveals < 0; i++ {
+		if remainingGas, err = deductGas(suppliedGas, DeleteGasCost); err != nil {
 			return nil, 0, err
 		}
-
-		if len(input) != allowListInputLen {
-			return nil, remainingGas, fmt.Errorf("invalid input length for read allow list: %d", len(input))
-		}
-
-		readAddress := common.BytesToAddress(input)
-		role := getRandomPartyStatus(evm.GetStateDB(), precompileAddr, readAddress)
-		roleBytes := common.Hash(role).Bytes()
-		return roleBytes, remainingGas, nil
+		deleteCounterHash(stateDB, revealPrefix, new(big.Int).SetUint64(i))
 	}
+	setRandomPartyBig(stateDB, revealPrefix, common.Big0)
+
+	commitDeadline = new(big.Int).Add(evm.BlockTime(), phaseDuration)
+	setRandomPartyBig(stateDB, commitDeadlineKey, commitDeadline)
+	setRandomPartyBig(stateDB, revealDeadlineKey, new(big.Int).Add(commitDeadline, phaseDuration))
+	return []byte{}, remainingGas, nil
 }
 
-// createRandomPartyPrecompile returns a StatefulPrecompiledContract with R/W control of an allow list at [precompileAddr]
+func commitRandomParty(evm PrecompileAccessibleState, callerAddr, addr common.Address, input []byte, suppliedGas uint64, readOnly bool) (ret []byte, remainingGas uint64, err error) {
+	if remainingGas, err = deductGas(suppliedGas, CommitGasCost); err != nil {
+		return nil, 0, err
+	}
+
+	stateDB := evm.GetStateDB()
+	commitDeadline := getRandomPartyBig(stateDB, commitDeadlineKey)
+	if commitDeadline.Sign() == 0 {
+		return nil, remainingGas, fmt.Errorf("no ongoing party")
+	}
+	if evm.BlockTime().Cmp(commitDeadline) >= 0 {
+		return nil, remainingGas, fmt.Errorf("too late to commit")
+	}
+
+	h, err := UnpackCommitRandomParty(input)
+	if err != nil {
+		return nil, remainingGas, err
+	}
+
+	if readOnly {
+		return nil, remainingGas, vmerrs.ErrWriteProtection
+	}
+
+	addCounterHash(stateDB, commitPrefix, h)
+	return []byte{}, remainingGas, nil
+}
+
+func revealRandomParty(evm PrecompileAccessibleState, callerAddr, addr common.Address, input []byte, suppliedGas uint64, readOnly bool) (ret []byte, remainingGas uint64, err error) {
+	if remainingGas, err = deductGas(suppliedGas, RevealGasCost); err != nil {
+		return nil, 0, err
+	}
+
+	stateDB := evm.GetStateDB()
+	revealDeadline := getRandomPartyBig(stateDB, revealDeadlineKey)
+	if revealDeadline.Sign() == 0 {
+		return nil, remainingGas, fmt.Errorf("no ongoing party")
+	}
+	if evm.BlockTime().Cmp(revealDeadline) >= 0 {
+		return nil, remainingGas, fmt.Errorf("too late to reveal")
+	}
+
+	idx, preimage, err := UnpackRevealRandomParty(input)
+	if err != nil {
+		return nil, remainingGas, err
+	}
+	h := getCounterHash(stateDB, commitPrefix, idx)
+	ch := crypto.Keccak256Hash(preimage.Bytes())
+	if h != ch {
+		return nil, remainingGas, fmt.Errorf("expected %v but got %v", h, ch)
+	}
+
+	if readOnly {
+		return nil, remainingGas, vmerrs.ErrWriteProtection
+	}
+
+	addCounterHash(stateDB, revealPrefix, preimage)
+	return []byte{}, remainingGas, nil
+}
+
+func computeRandomParty(evm PrecompileAccessibleState, callerAddr, addr common.Address, input []byte, suppliedGas uint64, readOnly bool) (ret []byte, remainingGas uint64, err error) {
+	if remainingGas, err = deductGas(suppliedGas, ComputeGasCost); err != nil {
+		return nil, 0, err
+	}
+
+	stateDB := evm.GetStateDB()
+	revealDeadline := getRandomPartyBig(stateDB, revealDeadlineKey)
+	if revealDeadline.Sign() == 0 {
+		return nil, remainingGas, fmt.Errorf("no ongoing party")
+	}
+	if evm.BlockTime().Cmp(revealDeadline) < 0 {
+		return nil, remainingGas, fmt.Errorf("too early to compute")
+	}
+
+	if len(input) != 0 {
+		return nil, remainingGas, fmt.Errorf("invalid input length for compute: %d", len(input))
+	}
+
+	reveals := getRandomPartyBig(stateDB, revealPrefix).Uint64() // approx
+	preimages := make([]byte, common.HashLength*(reveals-1))
+	for i := uint64(0); i < reveals; i++ {
+		if remainingGas, err = deductGas(suppliedGas, ComputeItemCost); err != nil {
+			return nil, 0, err
+		}
+		copy(preimages[i:i+common.HashLength], getCounterHash(stateDB, revealPrefix, new(big.Int).SetUint64(i)).Bytes())
+	}
+
+	if readOnly {
+		return nil, remainingGas, vmerrs.ErrWriteProtection
+	}
+
+	addResultHash(stateDB, crypto.Keccak256Hash(preimages))
+	return []byte{}, remainingGas, nil
+}
+
+// createRandomPartyPrecompile returns a StatefulPrecompiledContrac
 func createRandomPartyPrecompile(precompileAddr common.Address) StatefulPrecompiledContract {
-	setAdmin := newStatefulPrecompileFunction(setAdminSignature, createRandomPartyStageSetter(precompileAddr, RandomPartyAdmin))
-	setEnabled := newStatefulPrecompileFunction(setEnabledSignature, createRandomPartyStageSetter(precompileAddr, RandomPartyEnabled))
-	setNone := newStatefulPrecompileFunction(setNoneSignature, createRandomPartyStageSetter(precompileAddr, RandomPartyNoRole))
-	read := newStatefulPrecompileFunction(readRandomPartySignature, createReadRandomParty(precompileAddr))
+	start := newStatefulPrecompileFunction(startSignature, startRandomParty)
+	commit := newStatefulPrecompileFunction(setAdminSignature, commitRandomParty)
+	reveal := newStatefulPrecompileFunction(setAdminSignature, revealRandomParty)
+	compute := newStatefulPrecompileFunction(setAdminSignature, computeRandomParty)
+	result := newStatefulPrecompileFunction(setAdminSignature, createRandomPartyStageSetter(precompileAddr, RandomPartyAdmin))
+	next := newStatefulPrecompileFunction(setAdminSignature, createRandomPartyStageSetter(precompileAddr, RandomPartyAdmin))
 
 	// Construct the contract with no fallback function.
-	contract := newStatefulPrecompileWithFunctionSelectors(nil, []*statefulPrecompileFunction{setAdmin, setEnabled, setNone, read})
+	contract := newStatefulPrecompileWithFunctionSelectors(nil, []*statefulPrecompileFunction{start, commit, reveal, compute, result, next})
 	return contract
 }
