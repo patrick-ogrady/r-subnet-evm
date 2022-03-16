@@ -4,7 +4,6 @@
 package precompile
 
 import (
-	"errors"
 	"fmt"
 	"math/big"
 
@@ -92,6 +91,11 @@ func getCounterHash(state StateDB, prefix []byte, v *big.Int) common.Hash {
 	return state.GetState(RandomPartyAddress, common.BytesToHash(k))
 }
 
+func deleteCounterHash(state StateDB, prefix []byte, v *big.Int) {
+	k := append(prefix, v.Bytes()...)
+	state.SetState(RandomPartyAddress, common.BytesToHash(k), common.Hash{})
+}
+
 func addResultHash(state StateDB, round *big.Int, value common.Hash) {
 	k := append(resultPrefix, round.Bytes()...)
 	state.SetState(RandomPartyAddress, common.BytesToHash(k), value)
@@ -102,52 +106,38 @@ func getResultHash(state StateDB, round *big.Int) common.Hash {
 	return state.GetState(RandomPartyAddress, common.BytesToHash(k))
 }
 
-// getRandomPartyStatus returns the allow list role of [address] for the precompile
-// at [precompileAddr]
-func getRandomPartyStatus(state StateDB, precompileAddr common.Address, address common.Address) RandomPartyStage {
-	// Generate the state key for [address]
-	addressKey := address.Hash()
-	return RandomPartyStage(state.GetState(precompileAddr, addressKey))
+func PackCommitRandomParty(hash common.Hash) []byte {
+	return append(commitSignature, hash.Bytes()...)
 }
 
-// setRandomPartyStage sets the permissions of [address] to [role] for the precompile
-// at [precompileAddr].
-// assumes [role] has already been verified as valid.
-func setRandomPartyStage(stateDB StateDB, precompileAddr, address common.Address, role RandomPartyStage) {
-	// Generate the state key for [address]
-	addressKey := address.Hash()
-	// Assign [role] to the address
-	stateDB.SetState(precompileAddr, addressKey, common.Hash(role))
-}
-
-// PackModifyRandomParty packs [address] and [role] into the appropriate arguments for modifying the allow list.
-// Note: [role] is not packed in the input value returned, but is instead used as a selector for the function
-// selector that should be encoded in the input.
-func PackModifyRandomParty(address common.Address, role RandomPartyStage) ([]byte, error) {
-	// function selector (4 bytes) + hash for address
-	input := make([]byte, 0, selectorLen+common.HashLength)
-
-	switch role {
-	case RandomPartyAdmin:
-		input = append(input, setAdminSignature...)
-	case RandomPartyEnabled:
-		input = append(input, setEnabledSignature...)
-	case RandomPartyNoRole:
-		input = append(input, setNoneSignature...)
-	default:
-		return nil, fmt.Errorf("cannot pack modify list input with invalid role: %s", role)
+func UnpackCommitRandomParty(input []byte) (common.Hash, error) {
+	if len(input) != common.HashLength {
+		return common.Hash{}, fmt.Errorf("invalid input length for commit: %d", len(input))
 	}
-
-	input = append(input, address.Hash().Bytes()...)
-	return input, nil
+	return common.BytesToHash(input), nil
 }
 
-// PackReadRandomParty packs [address] into the input data to the read allow list function
-func PackReadRandomParty(address common.Address) []byte {
-	input := make([]byte, 0, selectorLen+common.HashLength)
-	input = append(input, readRandomPartySignature...)
-	input = append(input, address.Hash().Bytes()...)
-	return input
+func PackRevealRandomParty(v *big.Int, hash common.Hash) []byte {
+	r := append(revealSignature, common.BigToHash(v).Bytes()...)
+	return append(r, hash.Bytes()...)
+}
+
+func UnpackRevealRandomParty(input []byte) (*big.Int, common.Hash, error) {
+	if len(input) != common.HashLength*2 {
+		return nil, common.Hash{}, fmt.Errorf("invalid input length for reveal: %d", len(input))
+	}
+	return new(big.Int).SetBytes(input[:common.HashLength]), common.BytesToHash(input[common.HashLength:]), nil
+}
+
+func PackResultRandomParty(v *big.Int) []byte {
+	return append(resultSignature, common.BigToHash(v).Bytes()...)
+}
+
+func UnpackResultRandomParty(input []byte) (*big.Int, error) {
+	if len(input) != common.HashLength {
+		return nil, fmt.Errorf("invalid input length for result: %d", len(input))
+	}
+	return new(big.Int).SetBytes(input), nil
 }
 
 // createRandomPartyStageSetter returns an execution function for setting the allow list status of the input address argument to [role].
