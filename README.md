@@ -331,7 +331,7 @@ interface NativeMinterInterface {
 }
 ```
 
-_Note: Both `ContractDeployerAllowList` and `ContractNativeMinter` can be used together.
+_Note: Both `ContractDeployerAllowList` and `ContractNativeMinter` can be used together._
 
 ### Random Party
 If you need a VRF for your application, look no further than `RandomParty`. You
