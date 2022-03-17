@@ -334,7 +334,138 @@ interface NativeMinterInterface {
 _Note: Both `ContractDeployerAllowList` and `ContractNativeMinter` can be used together.
 
 ### Random Party
-TODO
+If you need a VRF for your application, look no further than `RandomParty`. You
+can provide a `RandomParty` configuration in your genesis file:
+```json
+{
+  "config": {
+    "chainId": 99999,
+    "homesteadBlock": 0,
+    "eip150Block": 0,
+    "eip150Hash": "0x2086799aeebeae135c246c65021c82b4e15a2c451340993aacfd2751886514f0",
+    "eip155Block": 0,
+    "eip158Block": 0,
+    "byzantiumBlock": 0,
+    "constantinopleBlock": 0,
+    "petersburgBlock": 0,
+    "istanbulBlock": 0,
+    "muirGlacierBlock": 0,
+    "subnetEVMTimestamp": 0,
+    "feeConfig": {
+      "gasLimit": 20000000,
+      "minBaseFee": 1000000000,
+      "targetGas": 100000000,
+      "baseFeeChangeDenominator": 48,
+      "minBlockGasCost": 0,
+      "maxBlockGasCost": 10000000,
+      "targetBlockRate": 2,
+      "blockGasCostStep": 500000
+    },
+    "randomPartyConfig":{
+      "blockTimestamp":0,
+      "phaseSeconds":300,
+      "commitStake":1000000000000000000
+    }
+  },
+  "alloc": {
+    "8db97C7cEcE249c2b98bDC0226Cc4C2A57BF52FC": {
+      "balance": "0x52B7D2DCC80CD2E4000000"
+    }
+  },
+  "nonce": "0x0",
+  "timestamp": "0x0",
+  "extraData": "0x00",
+  "gasLimit": "0x1312D00",
+  "difficulty": "0x0",
+  "mixHash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+  "coinbase": "0x0000000000000000000000000000000000000000",
+  "number": "0x0",
+  "gasUsed": "0x0",
+  "parentHash": "0x0000000000000000000000000000000000000000000000000000000000000000"
+}
+```
+
+In this example, the `RandomParty` precompile is initialized such that each
+"commit" and "reveal" phase is 300 seconds and anyone committing in
+`RandomParty` must lock 1 native token.
+
+The `Stateful Precompile` powering the `RandomParty` adheres to the following Solidity interface at `0x0300000000000000000000000000000000000000` (you can load this interface and interact directly in Remix):
+```solidity
+// (c) 2022-2023, Ava Labs, Inc. All rights reserved.
+// See the file LICENSE for licensing terms.
+
+// SPDX-License-Identifier: MIT
+
+pragma solidity >=0.8.0;
+
+// RandomPartyPrecompile is an implementation of an incentivized
+// commit/reveal VRF.
+//
+// Participants in Random Parties follow the flow below:
+// 1) start() => cleans up the metadata of a previous Random Party and inits
+//     a new Random Party (setting the length of the "commit" phase and "reveal"
+//     phase to [PhaseSeconds] and setting the "commit" lockup to
+//     [CommitStake])
+//
+//     Note: There is only ever 1 Random Party going on at once.
+// 2) [optional] sponsor() => anyone can donate funds to an incentive pool that
+//     is distributed amongst all participants that reveal the preimage of their
+//     commitment
+// 3) commit(bytes32 encoded) => submit the hash of some preimage that will
+//     be broadcasted during the "reveal" phase ([CommitStake] tokens must be
+//     locked as part of this operation and are returned when the preimage is
+//     revealed)
+// 4) reveal(uint256 index, bytes32 preimage) => reveal the preimage for some
+//     hash that was broadcast during the "commit" phase ([CommitStake] is returned
+//     at this time)
+//
+//     Note: If someone that posted a commitment does not reveal that
+//     commitment, they will not be able to retrieve their [CommitState].
+//     This mechanism is a naive deterrent for participants that may try to
+//     game the result of the computation.
+// 5) compute() => after the "commit" and "reveal" phases have passed, anyone
+//     can pay to compute the hash of all preimages (any balance in the
+//     incentive pool is distributed equally to everyone that broadcast a preimage)
+//
+// Contracts use the following methods to access the state of an ongoing/completed Random Party:
+// 1) reward() => returns the amount in the current incentive pool
+// 2) result(uint256 round) => returns the computed hash of preimages of a given Random Party
+//     round
+// 3) next() => returns the number of the next Random Party round (this
+//     number-1 is used to query the latest result)
+//
+// In short, anyone can start a Random Party on the
+// chain, anyone can sponsor a reward for contributors, anyone can
+// participate in providing randomness, and anyone can use the round results
+// in their smart contract.
+interface RandomPartyInterface {
+    // Start Random Party round
+    function start() external;
+
+    // Donate funds to the Random Party round incentive pool
+    function sponsor() payable external;
+
+    // Query the size of the current Random Party incentive pool
+    function reward() external view returns (uint256);
+
+    // Commit to the hash of some preimage (requires locking [CommitStake])
+    function commit(bytes32 encoded) payable external returns (uint256);
+
+    // Reveal the preimage of a previously committed hash (receive locked
+    // [CommitStake])
+    function reveal(uint256 index, bytes32 preimage) external;
+
+    // Generate the hash of all revealed preimages and distribute any funds in
+    // the incentive pool to all participants equally
+    function compute() external;
+
+    // Query the hash of all preimages in [round]
+    function result(uint256 round) external view returns (bytes32);
+
+    // Query the index of the next Random Party Round
+    function next() external view returns (uint256);
+}
+```
 
 ### Examples
 
