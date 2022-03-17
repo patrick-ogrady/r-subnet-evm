@@ -13,6 +13,10 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 )
 
+const (
+	delim = byte('/')
+)
+
 var (
 	_ StatefulPrecompileConfig = (*RandomPartyConfig)(nil)
 
@@ -22,7 +26,7 @@ var (
 	// Participants in Random Parties follow the flow below:
 	// 1) start() => cleans up the metadata of a previous Random Party and inits
 	//     a new Random Party (setting the length of the "commit" phase and "reveal"
-	//     phase to [PhaseDuration] and setting the "commit" lockup to
+	//     phase to [PhaseSeconds] and setting the "commit" lockup to
 	//     [CommitStake])
 	//
 	//     Note: There is only ever 1 Random Party going on at once.
@@ -60,18 +64,19 @@ var (
 )
 
 var (
-	// RandomParty function signatures
-	startSignature   = CalculateFunctionSelector("start()")
-	sponsorSignature = CalculateFunctionSelector("sponsor()")
-	rewardSignature  = CalculateFunctionSelector("reward()")
-	commitSignature  = CalculateFunctionSelector("commit(bytes32)")
-	revealSignature  = CalculateFunctionSelector("reveal(uint256,bytes32)")
-	computeSignature = CalculateFunctionSelector("compute()")
-	resultSignature  = CalculateFunctionSelector("result(uint256)")
-	nextSignature    = CalculateFunctionSelector("next()")
+	// Random Party function signatures
+	StartSignature   = CalculateFunctionSelector("start()")
+	SponsorSignature = CalculateFunctionSelector("sponsor()")
+	RewardSignature  = CalculateFunctionSelector("reward()")
+	CommitSignature  = CalculateFunctionSelector("commit(bytes32)")
+	RevealSignature  = CalculateFunctionSelector("reveal(uint256,bytes32)")
+	ComputeSignature = CalculateFunctionSelector("compute()")
+	ResultSignature  = CalculateFunctionSelector("result(uint256)")
+	NextSignature    = CalculateFunctionSelector("next()")
+)
 
-	delim = byte('/')
-
+var (
+	// Random Party errors
 	ErrRandomPartyUnderway  = errors.New("random party underway")
 	ErrNoRandomPartyStarted = errors.New("no random party started")
 	ErrTooLate              = errors.New("too late to interact")
@@ -80,158 +85,146 @@ var (
 	ErrInsufficientFunds    = errors.New("insufficient funds to perform commit")
 )
 
-// RandomPartyConfig specifies the configuration of the allow list.
-// Specifies the block timestamp at which it goes into effect as well as the initial set of allow list admins.
+// RandomPartyConfig specifies the configuration of the Random Party precompile.
 type RandomPartyConfig struct {
 	BlockTimestamp *big.Int `json:"blockTimestamp"`
 
-	PhaseDuration *big.Int `json:"phaseDuration"` // (seconds) recommend 1 hour
-	CommitFee     *big.Int `json:"commitFee"`
+	PhaseSeconds *big.Int `json:"phaseSeconds"`
+	CommitStake  *big.Int `json:"commitStake"`
 }
 
-// Address returns the address of the random party contract.
+// Address returns the address of the Random Party contract.
 func (c *RandomPartyConfig) Address() common.Address {
 	return RandomPartyAddress
 }
 
-// Timestamp returns the timestamp at which the allow list should be enabled
+// Timestamp returns the timestamp at which the Random Party should be enabled
 func (c *RandomPartyConfig) Timestamp() *big.Int { return c.BlockTimestamp }
 
-// Make public for tests
-func SetPhaseDuration(state StateDB, duration *big.Int) {
-	setRandomPartyBig(state, phaseDurationKey, duration)
-}
-func SetCommitFee(state StateDB, fee *big.Int) {
-	setRandomPartyBig(state, commitFeeKey, fee)
+// SetPhaseSeconds persists the configruation for "commit" and "reveal"
+// duration to the [StateDB].
+func SetPhaseSeconds(state StateDB, duration *big.Int) {
+	setBig(state, phaseSecondsKey, duration)
 }
 
-// Configure initializes the address space of [precompileAddr] by initializing the role of each of
-// the addresses in [RandomPartyAdmins].
+// SetCommitState persists the configruation for the required [CommitStake]
+// to the [StateDB].
+func SetCommitStake(state StateDB, fee *big.Int) {
+	setBig(state, commitStakeKey, fee)
+}
+
+// Configure initializes the address space of [RandomPartyAddress].
 func (c *RandomPartyConfig) Configure(state StateDB) {
-	SetPhaseDuration(state, c.PhaseDuration)
-	SetCommitFee(state, c.CommitFee)
+	SetPhaseSeconds(state, c.PhaseSeconds)
+	SetCommitStake(state, c.CommitStake)
 }
 
 // Contract returns the singleton stateful precompiled contract to be used for
-// the random party.
+// the Random Party.
 func (c *RandomPartyConfig) Contract() StatefulPrecompiledContract {
 	return RandomPartyPrecompile
 }
 
 var (
+	// Random Party state keys
 	commitDeadlineKey = []byte{0x1}
 	revealDeadlineKey = []byte{0x2}
 	commitPrefix      = []byte{0x3}
 	revealPrefix      = []byte{0x4}
 	resultPrefix      = []byte{0x5}
-	phaseDurationKey  = []byte{0x6}
-	commitFeeKey      = []byte{0x7}
+	phaseSecondsKey   = []byte{0x6}
+	commitStakeKey    = []byte{0x7}
 	commitOwnerPrefix = []byte{0x8}
 	rewardPrefix      = []byte{0x9}
 )
 
-func setRandomPartyBig(state StateDB, key []byte, val *big.Int) {
-	state.SetState(RandomPartyAddress, common.BytesToHash(key), common.BigToHash(val))
+func fastKey(pfx []byte, n *big.Int) common.Hash {
+	val := n.Bytes()
+	b := make([]byte, len(pfx)+1+len(val))
+	copy(b, pfx)
+	b[len(pfx)] = delim
+	copy(b[len(pfx)+1:], val)
+	return common.BytesToHash(b)
 }
 
-func getRandomPartyBig(state StateDB, key []byte) *big.Int {
+func transfer(state StateDB, dest common.Address, amount *big.Int) {
+	if !state.Exist(dest) {
+		state.CreateAccount(dest) // could've been deleted between interactions
+	}
+	state.AddBalance(dest, getBig(state, commitStakeKey))
+}
+
+func HBigBytes(b *big.Int) []byte {
+	return common.BigToHash(b).Bytes()
+}
+
+// *math.Big setter/getter
+func setBig(state StateDB, key []byte, val *big.Int) {
+	state.SetState(RandomPartyAddress, common.BytesToHash(key), common.BigToHash(val))
+}
+func getBig(state StateDB, key []byte) *big.Int {
 	h := state.GetState(RandomPartyAddress, common.BytesToHash(key))
 	return new(big.Int).SetBytes(h.Bytes())
 }
 
-func addCounterHash(state StateDB, prefix []byte, hash common.Hash) *big.Int {
-	currV := getRandomPartyBig(state, prefix)
+// counter commmon.Hash setter/getter/deleter
+func addCounterHash(state StateDB, pfx []byte, hash common.Hash) *big.Int {
+	currV := getBig(state, pfx)
 	newV := new(big.Int).Add(currV, common.Big1)
-	setRandomPartyBig(state, prefix, newV)
-	k := append(prefix, delim)
-	k = append(k, currV.Bytes()...)
-	state.SetState(RandomPartyAddress, common.BytesToHash(k), hash)
+	setBig(state, pfx, newV)
+	state.SetState(RandomPartyAddress, fastKey(pfx, currV), hash)
 	return currV
 }
-
-func getCounterHash(state StateDB, prefix []byte, v *big.Int) common.Hash {
-	k := append(prefix, delim)
-	k = append(k, v.Bytes()...)
-	return state.GetState(RandomPartyAddress, common.BytesToHash(k))
+func getCounterHash(state StateDB, pfx []byte, v *big.Int) common.Hash {
+	return state.GetState(RandomPartyAddress, fastKey(pfx, v))
+}
+func deleteCounterHash(state StateDB, pfx []byte, v *big.Int) {
+	state.SetState(RandomPartyAddress, fastKey(pfx, v), common.Hash{})
 }
 
-func deleteCounterHash(state StateDB, prefix []byte, v *big.Int) {
-	k := append(prefix, delim)
-	k = append(k, v.Bytes()...)
-	state.SetState(RandomPartyAddress, common.BytesToHash(k), common.Hash{})
+// common.Address setter/getter/deleter
+func setIdxAddress(state StateDB, pfx []byte, idx *big.Int, addr common.Address) {
+	state.SetState(RandomPartyAddress, fastKey(pfx, idx), addr.Hash())
 }
-
-func addResultHash(state StateDB, value common.Hash) {
-	currV := getRandomPartyBig(state, resultPrefix)
-	newV := new(big.Int).Add(currV, common.Big1)
-	setRandomPartyBig(state, resultPrefix, newV)
-	k := append(resultPrefix, delim)
-	k = append(k, currV.Bytes()...)
-	state.SetState(RandomPartyAddress, common.BytesToHash(k), value)
-}
-
-func getResultHash(state StateDB, round *big.Int) common.Hash {
-	k := append(resultPrefix, delim)
-	k = append(k, round.Bytes()...)
-	return state.GetState(RandomPartyAddress, common.BytesToHash(k))
-}
-
-func setRandomPartyFundRecipient(state StateDB, pfx []byte, idx *big.Int, addr common.Address) {
-	k := append(pfx, delim)
-	k = append(k, idx.Bytes()...)
-	state.SetState(RandomPartyAddress, common.BytesToHash(k), addr.Hash())
-}
-
-func getRandomPartyFundRecipient(state StateDB, pfx []byte, idx *big.Int) common.Address {
-	k := append(pfx, delim)
-	k = append(k, idx.Bytes()...)
-	h := state.GetState(RandomPartyAddress, common.BytesToHash(k))
+func getIdxAddress(state StateDB, pfx []byte, idx *big.Int) common.Address {
+	h := state.GetState(RandomPartyAddress, fastKey(pfx, idx))
 	return common.BytesToAddress(h.Bytes())
 }
-
-func deleteRandomPartyFundRecipient(state StateDB, pfx []byte, idx *big.Int) {
-	k := append(pfx, delim)
-	k = append(k, idx.Bytes()...)
-	state.SetState(RandomPartyAddress, common.BytesToHash(k), common.Hash{})
+func deleteIdxAddress(state StateDB, pfx []byte, idx *big.Int) {
+	state.SetState(RandomPartyAddress, fastKey(pfx, idx), common.Hash{})
 }
 
-func PackCommitRandomParty(hash common.Hash) []byte {
-	return append(commitSignature, hash.Bytes()...)
+// packers/unpackers
+func PackCommit(hash common.Hash) []byte {
+	return append(CommitSignature, hash.Bytes()...)
 }
-
-func UnpackCommitRandomParty(input []byte) (common.Hash, error) {
+func UnpackCommit(input []byte) (common.Hash, error) {
 	if len(input) != common.HashLength {
 		return common.Hash{}, fmt.Errorf("invalid input length for commit: %d", len(input))
 	}
 	return common.BytesToHash(input), nil
 }
-
-func PackRevealRandomParty(v *big.Int, hash common.Hash) []byte {
-	r := append(revealSignature, common.BigToHash(v).Bytes()...)
+func PackReveal(v *big.Int, hash common.Hash) []byte {
+	r := append(RevealSignature, common.BigToHash(v).Bytes()...)
 	return append(r, hash.Bytes()...)
 }
-
-func UnpackRevealRandomParty(input []byte) (*big.Int, common.Hash, error) {
+func UnpackReveal(input []byte) (*big.Int, common.Hash, error) {
 	if len(input) != common.HashLength*2 {
 		return nil, common.Hash{}, fmt.Errorf("invalid input length for reveal: %d", len(input))
 	}
 	return new(big.Int).SetBytes(input[:common.HashLength]), common.BytesToHash(input[common.HashLength:]), nil
 }
-
-func PackResultRandomParty(v *big.Int) []byte {
-	return append(resultSignature, common.BigToHash(v).Bytes()...)
+func PackResult(v *big.Int) []byte {
+	return append(ResultSignature, common.BigToHash(v).Bytes()...)
 }
-
-func UnpackResultRandomParty(input []byte) (*big.Int, error) {
+func UnpackResult(input []byte) (*big.Int, error) {
 	if len(input) != common.HashLength {
 		return nil, fmt.Errorf("invalid input length for result: %d", len(input))
 	}
 	return new(big.Int).SetBytes(input), nil
 }
 
-// TODO: allow person that spins up a random party to provide an incentive pool
-// that is shared equally amongest all revealers
-func startRandomParty(evm PrecompileAccessibleState, callerAddr, addr common.Address, input []byte, suppliedGas uint64, value *big.Int, readOnly bool) (ret []byte, remainingGas uint64, err error) {
+func start(evm PrecompileAccessibleState, callerAddr, addr common.Address, input []byte, suppliedGas uint64, value *big.Int, readOnly bool) (ret []byte, remainingGas uint64, err error) {
 	if remainingGas, err = deductGas(suppliedGas, StartGasCost); err != nil {
 		return nil, 0, err
 	}
@@ -241,7 +234,7 @@ func startRandomParty(evm PrecompileAccessibleState, callerAddr, addr common.Add
 	}
 
 	stateDB := evm.GetStateDB()
-	commitDeadline := getRandomPartyBig(stateDB, commitDeadlineKey)
+	commitDeadline := getBig(stateDB, commitDeadlineKey)
 	if commitDeadline.Sign() != 0 {
 		return nil, remainingGas, ErrRandomPartyUnderway
 	}
@@ -250,36 +243,35 @@ func startRandomParty(evm PrecompileAccessibleState, callerAddr, addr common.Add
 		return nil, remainingGas, vmerrs.ErrWriteProtection
 	}
 
-	commits := getRandomPartyBig(stateDB, commitPrefix).Uint64() // should never have this many commits
-	for i := uint64(0); i < commits; i++ {
+	// Cleanup old commits and reveals
+	commits := getBig(stateDB, commitPrefix)
+	for i := common.Big0; i.Cmp(commits) < 0; i = new(big.Int).Add(i, common.Big1) {
 		if remainingGas, err = deductGas(remainingGas, DeleteGasCost); err != nil {
 			return nil, 0, err
 		}
-		idx := new(big.Int).SetUint64(i)
-		deleteCounterHash(stateDB, commitPrefix, idx)
-		deleteRandomPartyFundRecipient(stateDB, commitOwnerPrefix, idx)
+		deleteCounterHash(stateDB, commitPrefix, i)
+		deleteIdxAddress(stateDB, commitOwnerPrefix, i)
 	}
-	setRandomPartyBig(stateDB, commitPrefix, common.Big0)
-
-	reveals := getRandomPartyBig(stateDB, revealPrefix).Uint64() // should never have this many commits
-	for i := uint64(0); i < reveals; i++ {
+	setBig(stateDB, commitPrefix, common.Big0)
+	reveals := getBig(stateDB, revealPrefix)
+	for i := common.Big0; i.Cmp(reveals) < 0; i = new(big.Int).Add(i, common.Big1) {
 		if remainingGas, err = deductGas(remainingGas, DeleteGasCost); err != nil {
 			return nil, 0, err
 		}
-		idx := new(big.Int).SetUint64(i)
-		deleteCounterHash(stateDB, revealPrefix, idx)
-		deleteRandomPartyFundRecipient(stateDB, rewardPrefix, idx)
+		deleteCounterHash(stateDB, revealPrefix, i)
+		deleteIdxAddress(stateDB, rewardPrefix, i)
 	}
-	setRandomPartyBig(stateDB, revealPrefix, common.Big0)
+	setBig(stateDB, revealPrefix, common.Big0)
 
-	phaseDuration := getRandomPartyBig(stateDB, phaseDurationKey)
+	// Set phase deadlines
+	phaseDuration := getBig(stateDB, phaseSecondsKey)
 	commitDeadline = new(big.Int).Add(evm.BlockTime(), phaseDuration)
-	setRandomPartyBig(stateDB, commitDeadlineKey, commitDeadline)
-	setRandomPartyBig(stateDB, revealDeadlineKey, new(big.Int).Add(commitDeadline, phaseDuration))
+	setBig(stateDB, commitDeadlineKey, commitDeadline)
+	setBig(stateDB, revealDeadlineKey, new(big.Int).Add(commitDeadline, phaseDuration))
 	return []byte{}, remainingGas, nil
 }
 
-func sponsorRandomParty(evm PrecompileAccessibleState, callerAddr, addr common.Address, input []byte, suppliedGas uint64, value *big.Int, readOnly bool) (ret []byte, remainingGas uint64, err error) {
+func sponsor(evm PrecompileAccessibleState, callerAddr, addr common.Address, input []byte, suppliedGas uint64, value *big.Int, readOnly bool) (ret []byte, remainingGas uint64, err error) {
 	if remainingGas, err = deductGas(suppliedGas, SponsorGasCost); err != nil {
 		return nil, 0, err
 	}
@@ -289,27 +281,25 @@ func sponsorRandomParty(evm PrecompileAccessibleState, callerAddr, addr common.A
 	}
 
 	stateDB := evm.GetStateDB()
-	commitDeadline := getRandomPartyBig(stateDB, commitDeadlineKey)
+	commitDeadline := getBig(stateDB, commitDeadlineKey)
 	if commitDeadline.Sign() == 0 {
 		return nil, remainingGas, ErrNoRandomPartyStarted
 	}
-	// Only allow sponsoring while people are still committing
 	if evm.BlockTime().Cmp(commitDeadline) >= 0 {
 		return nil, remainingGas, ErrTooLate
 	}
 
-	// Make sure value is sufficient
-	rewardAmount := getRandomPartyBig(stateDB, rewardPrefix)
+	rewardAmount := getBig(stateDB, rewardPrefix)
 
 	if readOnly {
 		return nil, remainingGas, vmerrs.ErrWriteProtection
 	}
 
-	setRandomPartyBig(stateDB, rewardPrefix, new(big.Int).Add(rewardAmount, value))
+	setBig(stateDB, rewardPrefix, new(big.Int).Add(rewardAmount, value))
 	return []byte{}, remainingGas, nil
 }
 
-func rewardRandomParty(evm PrecompileAccessibleState, callerAddr, addr common.Address, input []byte, suppliedGas uint64, value *big.Int, readOnly bool) (ret []byte, remainingGas uint64, err error) {
+func reward(evm PrecompileAccessibleState, callerAddr, addr common.Address, input []byte, suppliedGas uint64, value *big.Int, readOnly bool) (ret []byte, remainingGas uint64, err error) {
 	if remainingGas, err = deductGas(suppliedGas, RewardGasCost); err != nil {
 		return nil, 0, err
 	}
@@ -319,21 +309,20 @@ func rewardRandomParty(evm PrecompileAccessibleState, callerAddr, addr common.Ad
 	}
 
 	stateDB := evm.GetStateDB()
-	commitDeadline := getRandomPartyBig(stateDB, commitDeadlineKey)
+	commitDeadline := getBig(stateDB, commitDeadlineKey)
 	if commitDeadline.Sign() == 0 {
 		return nil, remainingGas, ErrNoRandomPartyStarted
 	}
-
-	return common.BigToHash(getRandomPartyBig(stateDB, rewardPrefix)).Bytes(), remainingGas, nil
+	return HBigBytes(getBig(stateDB, rewardPrefix)), remainingGas, nil
 }
 
-func commitRandomParty(evm PrecompileAccessibleState, callerAddr, addr common.Address, input []byte, suppliedGas uint64, value *big.Int, readOnly bool) (ret []byte, remainingGas uint64, err error) {
+func commit(evm PrecompileAccessibleState, callerAddr, addr common.Address, input []byte, suppliedGas uint64, value *big.Int, readOnly bool) (ret []byte, remainingGas uint64, err error) {
 	if remainingGas, err = deductGas(suppliedGas, CommitGasCost); err != nil {
 		return nil, 0, err
 	}
 
 	stateDB := evm.GetStateDB()
-	commitDeadline := getRandomPartyBig(stateDB, commitDeadlineKey)
+	commitDeadline := getBig(stateDB, commitDeadlineKey)
 	if commitDeadline.Sign() == 0 {
 		return nil, remainingGas, ErrNoRandomPartyStarted
 	}
@@ -341,15 +330,15 @@ func commitRandomParty(evm PrecompileAccessibleState, callerAddr, addr common.Ad
 		return nil, remainingGas, ErrTooLate
 	}
 
-	h, err := UnpackCommitRandomParty(input)
+	h, err := UnpackCommit(input)
 	if err != nil {
 		return nil, remainingGas, err
 	}
 
 	// Make sure value is sufficient
-	commitFeeAmount := getRandomPartyBig(stateDB, commitFeeKey)
-	if value == nil || value.Cmp(commitFeeAmount) < 0 {
-		return nil, remainingGas, fmt.Errorf("%w: required %d", ErrInsufficientFunds, commitFeeAmount)
+	commitStakeAmount := getBig(stateDB, commitStakeKey)
+	if value == nil || value.Cmp(commitStakeAmount) < 0 {
+		return nil, remainingGas, fmt.Errorf("%w: required %d", ErrInsufficientFunds, commitStakeAmount)
 	}
 
 	if readOnly {
@@ -357,18 +346,18 @@ func commitRandomParty(evm PrecompileAccessibleState, callerAddr, addr common.Ad
 	}
 
 	idx := addCounterHash(stateDB, commitPrefix, h)
-	setRandomPartyFundRecipient(stateDB, commitOwnerPrefix, idx, callerAddr)
-	return common.BigToHash(idx).Bytes(), remainingGas, nil
+	setIdxAddress(stateDB, commitOwnerPrefix, idx, callerAddr)
+	return HBigBytes(idx), remainingGas, nil
 }
 
-func revealRandomParty(evm PrecompileAccessibleState, callerAddr, addr common.Address, input []byte, suppliedGas uint64, value *big.Int, readOnly bool) (ret []byte, remainingGas uint64, err error) {
+func reveal(evm PrecompileAccessibleState, callerAddr, addr common.Address, input []byte, suppliedGas uint64, value *big.Int, readOnly bool) (ret []byte, remainingGas uint64, err error) {
 	if remainingGas, err = deductGas(suppliedGas, RevealGasCost); err != nil {
 		return nil, 0, err
 	}
 
 	stateDB := evm.GetStateDB()
-	commitDeadline := getRandomPartyBig(stateDB, commitDeadlineKey)
-	revealDeadline := getRandomPartyBig(stateDB, revealDeadlineKey)
+	commitDeadline := getBig(stateDB, commitDeadlineKey)
+	revealDeadline := getBig(stateDB, revealDeadlineKey)
 	if commitDeadline.Sign() == 0 || revealDeadline.Sign() == 0 {
 		return nil, remainingGas, ErrNoRandomPartyStarted
 	}
@@ -379,11 +368,11 @@ func revealRandomParty(evm PrecompileAccessibleState, callerAddr, addr common.Ad
 		return nil, remainingGas, ErrTooLate
 	}
 
-	idx, preimage, err := UnpackRevealRandomParty(input)
+	idx, preimage, err := UnpackReveal(input)
 	if err != nil {
 		return nil, remainingGas, err
 	}
-	largestCommit := getRandomPartyBig(stateDB, commitPrefix)
+	largestCommit := getBig(stateDB, commitPrefix)
 	if idx.Cmp(largestCommit) >= 0 {
 		return nil, remainingGas, fmt.Errorf("no hash with index %d", idx)
 	}
@@ -396,32 +385,29 @@ func revealRandomParty(evm PrecompileAccessibleState, callerAddr, addr common.Ad
 		return nil, remainingGas, fmt.Errorf("expected %v but got %v (hash %v preimage %v)", h, ch, h, preimage)
 	}
 
-	feeRecipient := getRandomPartyFundRecipient(stateDB, commitOwnerPrefix, idx)
+	feeRecipient := getIdxAddress(stateDB, commitOwnerPrefix, idx)
 
 	if readOnly {
 		return nil, remainingGas, vmerrs.ErrWriteProtection
 	}
 
-	if !stateDB.Exist(feeRecipient) {
-		stateDB.CreateAccount(feeRecipient) // could've been deleted between interactions
-	}
-	stateDB.AddBalance(feeRecipient, getRandomPartyBig(stateDB, commitFeeKey))
+	transfer(stateDB, feeRecipient, getBig(stateDB, commitStakeKey))
 
 	// prevent duplicate reveals
 	deleteCounterHash(stateDB, commitPrefix, idx)
-	deleteRandomPartyFundRecipient(stateDB, commitOwnerPrefix, idx)
+	deleteIdxAddress(stateDB, commitOwnerPrefix, idx)
 	nidx := addCounterHash(stateDB, revealPrefix, preimage)
-	setRandomPartyFundRecipient(stateDB, rewardPrefix, nidx, feeRecipient)
+	setIdxAddress(stateDB, rewardPrefix, nidx, feeRecipient)
 	return []byte{}, remainingGas, nil
 }
 
-func computeRandomParty(evm PrecompileAccessibleState, callerAddr, addr common.Address, input []byte, suppliedGas uint64, value *big.Int, readOnly bool) (ret []byte, remainingGas uint64, err error) {
+func compute(evm PrecompileAccessibleState, callerAddr, addr common.Address, input []byte, suppliedGas uint64, value *big.Int, readOnly bool) (ret []byte, remainingGas uint64, err error) {
 	if remainingGas, err = deductGas(suppliedGas, ComputeGasCost); err != nil {
 		return nil, 0, err
 	}
 
 	stateDB := evm.GetStateDB()
-	revealDeadline := getRandomPartyBig(stateDB, revealDeadlineKey)
+	revealDeadline := getBig(stateDB, revealDeadlineKey)
 	if revealDeadline.Sign() == 0 {
 		return nil, remainingGas, ErrNoRandomPartyStarted
 	}
@@ -433,15 +419,15 @@ func computeRandomParty(evm PrecompileAccessibleState, callerAddr, addr common.A
 		return nil, remainingGas, fmt.Errorf("invalid input length for compute: %d", len(input))
 	}
 
-	reveals := getRandomPartyBig(stateDB, revealPrefix)
-	rewardAmount := getRandomPartyBig(stateDB, rewardPrefix)
+	reveals := getBig(stateDB, revealPrefix)
+	rewardAmount := getBig(stateDB, rewardPrefix)
 	eachRewardAmount := common.Big0
 	shouldReward := false
-	ri := reveals.Uint64()
-	if ri > 0 && rewardAmount.Sign() > 0 {
+	if reveals.Sign() > 0 && rewardAmount.Sign() > 0 {
 		eachRewardAmount = new(big.Int).Div(rewardAmount, reveals)
 		shouldReward = true
 	}
+	ri := reveals.Uint64()
 	preimages := make([]byte, common.HashLength*ri)
 	for i := uint64(0); i < ri; i++ {
 		if remainingGas, err = deductGas(remainingGas, ComputeItemCost); err != nil {
@@ -449,44 +435,43 @@ func computeRandomParty(evm PrecompileAccessibleState, callerAddr, addr common.A
 		}
 		bi := new(big.Int).SetUint64(i)
 		copy(preimages[i:i+common.HashLength], getCounterHash(stateDB, revealPrefix, bi).Bytes())
-		if shouldReward {
-			if remainingGas, err = deductGas(remainingGas, ComputeRewardCost); err != nil {
-				return nil, 0, err
-			}
-			rewardRecipient := getRandomPartyFundRecipient(stateDB, rewardPrefix, bi)
-			if !stateDB.Exist(rewardRecipient) {
-				stateDB.CreateAccount(rewardRecipient) // could've been deleted between interactions
-			}
-			stateDB.AddBalance(rewardRecipient, eachRewardAmount)
+
+		if !shouldReward {
+			continue
 		}
+
+		if remainingGas, err = deductGas(remainingGas, ComputeRewardCost); err != nil {
+			return nil, 0, err
+		}
+		rewardRecipient := getIdxAddress(stateDB, rewardPrefix, bi)
+		transfer(stateDB, rewardRecipient, eachRewardAmount)
 	}
 
 	if readOnly {
 		return nil, remainingGas, vmerrs.ErrWriteProtection
 	}
 
-	setRandomPartyBig(stateDB, commitDeadlineKey, common.Big0)
-	setRandomPartyBig(stateDB, revealDeadlineKey, common.Big0)
-	setRandomPartyBig(stateDB, rewardPrefix, common.Big0)
-	addResultHash(stateDB, crypto.Keccak256Hash(preimages))
+	setBig(stateDB, commitDeadlineKey, common.Big0)
+	setBig(stateDB, revealDeadlineKey, common.Big0)
+	setBig(stateDB, rewardPrefix, common.Big0)
+	addCounterHash(stateDB, resultPrefix, crypto.Keccak256Hash(preimages))
 	return []byte{}, remainingGas, nil
 }
 
-func resultRandomParty(evm PrecompileAccessibleState, callerAddr, addr common.Address, input []byte, suppliedGas uint64, value *big.Int, readOnly bool) (ret []byte, remainingGas uint64, err error) {
+func result(evm PrecompileAccessibleState, callerAddr, addr common.Address, input []byte, suppliedGas uint64, value *big.Int, readOnly bool) (ret []byte, remainingGas uint64, err error) {
 	if remainingGas, err = deductGas(suppliedGas, ResultCost); err != nil {
 		return nil, 0, err
 	}
 
 	stateDB := evm.GetStateDB()
-	round, err := UnpackResultRandomParty(input)
+	round, err := UnpackResult(input)
 	if err != nil {
 		return nil, remainingGas, err
 	}
-
-	return getResultHash(stateDB, round).Bytes(), remainingGas, nil
+	return getCounterHash(stateDB, resultPrefix, round).Bytes(), remainingGas, nil
 }
 
-func nextRandomParty(evm PrecompileAccessibleState, callerAddr, addr common.Address, input []byte, suppliedGas uint64, value *big.Int, readOnly bool) (ret []byte, remainingGas uint64, err error) {
+func next(evm PrecompileAccessibleState, callerAddr, addr common.Address, input []byte, suppliedGas uint64, value *big.Int, readOnly bool) (ret []byte, remainingGas uint64, err error) {
 	if remainingGas, err = deductGas(suppliedGas, NextCost); err != nil {
 		return nil, 0, err
 	}
@@ -496,23 +481,23 @@ func nextRandomParty(evm PrecompileAccessibleState, callerAddr, addr common.Addr
 	}
 
 	stateDB := evm.GetStateDB()
-	return common.BigToHash(getRandomPartyBig(stateDB, resultPrefix)).Bytes(), remainingGas, nil
+	return HBigBytes(getBig(stateDB, resultPrefix)), remainingGas, nil
 }
 
 // createRandomPartyPrecompile returns a StatefulPrecompiledContrac
 func createRandomPartyPrecompile(precompileAddr common.Address) StatefulPrecompiledContract {
-	start := newStatefulPrecompileFunction(startSignature, startRandomParty)
-	sponsor := newStatefulPrecompileFunction(sponsorSignature, sponsorRandomParty)
-	reward := newStatefulPrecompileFunction(rewardSignature, rewardRandomParty)
-	commit := newStatefulPrecompileFunction(commitSignature, commitRandomParty)
-	reveal := newStatefulPrecompileFunction(revealSignature, revealRandomParty)
-	compute := newStatefulPrecompileFunction(computeSignature, computeRandomParty)
-	result := newStatefulPrecompileFunction(resultSignature, resultRandomParty)
-	next := newStatefulPrecompileFunction(nextSignature, nextRandomParty)
+	startFunc := newStatefulPrecompileFunction(StartSignature, start)
+	sponsorFunc := newStatefulPrecompileFunction(SponsorSignature, sponsor)
+	rewardFunc := newStatefulPrecompileFunction(RewardSignature, reward)
+	commitFunc := newStatefulPrecompileFunction(CommitSignature, commit)
+	revealFunc := newStatefulPrecompileFunction(RevealSignature, reveal)
+	computeFunc := newStatefulPrecompileFunction(ComputeSignature, compute)
+	resultFunc := newStatefulPrecompileFunction(ResultSignature, result)
+	nextFunc := newStatefulPrecompileFunction(NextSignature, next)
 
 	// Construct the contract with no fallback function.
 	contract := newStatefulPrecompileWithFunctionSelectors(nil, []*statefulPrecompileFunction{
-		start, sponsor, reward, commit, reveal, compute, result, next,
+		startFunc, sponsorFunc, rewardFunc, commitFunc, revealFunc, computeFunc, resultFunc, nextFunc,
 	})
 	return contract
 }
