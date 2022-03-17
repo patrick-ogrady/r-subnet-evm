@@ -331,7 +331,141 @@ interface NativeMinterInterface {
 }
 ```
 
-_Note: Both `ContractDeployerAllowList` and `ContractNativeMinter` can be used together.
+_Note: Both `ContractDeployerAllowList` and `ContractNativeMinter` can be used together._
+
+### Random Party
+If you need a VRF for your application, look no further than `RandomParty`. You
+can provide a `RandomParty` configuration in your genesis file:
+```json
+{
+  "config": {
+    "chainId": 99999,
+    "homesteadBlock": 0,
+    "eip150Block": 0,
+    "eip150Hash": "0x2086799aeebeae135c246c65021c82b4e15a2c451340993aacfd2751886514f0",
+    "eip155Block": 0,
+    "eip158Block": 0,
+    "byzantiumBlock": 0,
+    "constantinopleBlock": 0,
+    "petersburgBlock": 0,
+    "istanbulBlock": 0,
+    "muirGlacierBlock": 0,
+    "subnetEVMTimestamp": 0,
+    "feeConfig": {
+      "gasLimit": 20000000,
+      "minBaseFee": 1000000000,
+      "targetGas": 100000000,
+      "baseFeeChangeDenominator": 48,
+      "minBlockGasCost": 0,
+      "maxBlockGasCost": 10000000,
+      "targetBlockRate": 2,
+      "blockGasCostStep": 500000
+    },
+    "randomPartyConfig":{
+      "blockTimestamp":0,
+      "phaseSeconds":300,
+      "commitStake":1000000000000000000
+    }
+  },
+  "alloc": {
+    "8db97C7cEcE249c2b98bDC0226Cc4C2A57BF52FC": {
+      "balance": "0x52B7D2DCC80CD2E4000000"
+    }
+  },
+  "nonce": "0x0",
+  "timestamp": "0x0",
+  "extraData": "0x00",
+  "gasLimit": "0x1312D00",
+  "difficulty": "0x0",
+  "mixHash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+  "coinbase": "0x0000000000000000000000000000000000000000",
+  "number": "0x0",
+  "gasUsed": "0x0",
+  "parentHash": "0x0000000000000000000000000000000000000000000000000000000000000000"
+}
+```
+
+In this example, the `RandomParty` precompile is initialized such that each
+"commit" and "reveal" phase is 300 seconds and anyone committing in
+`RandomParty` must lock 1 native token.
+
+The `Stateful Precompile` powering the `RandomParty` adheres to the following Solidity interface at `0x0300000000000000000000000000000000000000` (you can load this interface and interact directly in Remix):
+```solidity
+// (c) 2022-2023, Ava Labs, Inc. All rights reserved.
+// See the file LICENSE for licensing terms.
+
+// SPDX-License-Identifier: MIT
+
+pragma solidity >=0.8.0;
+
+// RandomPartyPrecompile is an implementation of an incentivized
+// commit/reveal VRF.
+//
+// Participants in Random Parties follow the flow below:
+// 1) start() => cleans up the metadata of a previous Random Party and inits
+//     a new Random Party (setting the length of the "commit" phase and "reveal"
+//     phase to [PhaseSeconds] and setting the "commit" lockup to
+//     [CommitStake])
+//
+//     Note: There is only ever 1 Random Party going on at once.
+// 2) [optional] sponsor() => anyone can donate funds to an incentive pool that
+//     is distributed amongst all participants that reveal the preimage of their
+//     commitment
+// 3) commit(bytes32 encoded) => submit the hash of some preimage that will
+//     be broadcasted during the "reveal" phase ([CommitStake] tokens must be
+//     locked as part of this operation and are returned when the preimage is
+//     revealed)
+// 4) reveal(uint256 index, bytes32 preimage) => reveal the preimage for some
+//     hash that was broadcast during the "commit" phase ([CommitStake] is returned
+//     at this time)
+//
+//     Note: If someone that posted a commitment does not reveal that
+//     commitment, they will not be able to retrieve their [CommitState].
+//     This mechanism is a naive deterrent for participants that may try to
+//     game the result of the computation.
+// 5) compute() => after the "commit" and "reveal" phases have passed, anyone
+//     can pay to compute the hash of all preimages (any balance in the
+//     incentive pool is distributed equally to everyone that broadcast a preimage)
+//
+// Contracts use the following methods to access the state of an ongoing/completed Random Party:
+// 1) reward() => returns the amount in the current incentive pool
+// 2) result(uint256 round) => returns the computed hash of preimages of a given Random Party
+//     round
+// 3) next() => returns the number of the next Random Party round (this
+//     number-1 is used to query the latest result)
+//
+// In short, anyone can start a Random Party on the
+// chain, anyone can sponsor a reward for contributors, anyone can
+// participate in providing randomness, and anyone can use the round results
+// in their smart contract.
+interface RandomPartyInterface {
+    // Start Random Party round
+    function start() external;
+
+    // Donate funds to the Random Party round incentive pool
+    function sponsor() payable external;
+
+    // Query the size of the current Random Party incentive pool
+    function reward() external view returns (uint256);
+
+    // Commit to the hash of some preimage (requires locking [CommitStake])
+    function commit(bytes32 encoded) payable external returns (uint256);
+
+    // Reveal the preimage of a previously committed hash (receive locked
+    // [CommitStake])
+    function reveal(uint256 index, bytes32 preimage) external;
+
+    // Generate the hash of all revealed preimages and distribute any funds in
+    // the incentive pool to all participants equally
+    function compute() external;
+
+    // Query the hash of all preimages in [round]
+    function result(uint256 round) external view returns (bytes32);
+
+    // Query the index of the next Random Party Round
+    function next() external view returns (uint256);
+}
+```
 
 ### Examples
 
@@ -341,6 +475,9 @@ Subnet-EVM contains example contracts for precompiles under `/contract-examples`
 
 [`scripts/run.sh`](scripts/run.sh) automatically installs [avalanchego], sets up a local network,
 and creates a `subnet-evm` genesis file.
+
+**IN THIS FORK, THE LOCAL NETWORK AUTOMATICALLY ACTIVATES THE `RANDOMPARTY`
+PRECOMPILE.**
 
 ```bash
 # to startup a local cluster (good for development)
@@ -607,172 +744,6 @@ INFO [01-26|05:54:19] chains/manager.go#246: creating chain:
     ID: 2AM3vsuLoJdGBGqX2ibE8RGEq4Lg7g4bot6BT1Z7B9dH5corUD
     VMID:sqja3uK17MJxfC7AN8nGadBw9JK5BcrsNwNynsqP5Gih8M5Bm
 ERROR[01-26|05:54:19] chains/manager.go#270: error creating chain 2AM3vsuLoJdGBGqX2ibE8RGEq4Lg7g4bot6BT1Z7B9dH5corUD: error while looking up VM: there is no ID with alias sqja3uK17MJxfC7AN8nGadBw9JK5BcrsNwNynsqP5Gih8M5Bm
-```
-
-## Join the WAGMI Subnet Demo
-
-<p align="center">
-  <img width="40%" alt="WAGMI" src="./imgs/wagmi.png">
-</p>
-
-_Thanks to the @0xNeonMonsters for the logo!_
-
-The WAGMI ("We're All Going to Make It") Subnet Demo is a high throughput
-testbed for EVM (Ethereum Virtual Machine) optimizations. It is parameterized
-to run at a factor more capacity than Fuji/Mainnet C-Chain and will be used
-to experiment with release candidates before they make it into an
-official [`coreth`](https://github.com/ava-labs/coreth) release.
-
-We created a basic [WAGMI explorer](https://trywagmi.xyz) that surfaces
-aggregated usage statistics about the subnet. If you'd like to see any other
-stats added to this site, please send a DM to [@\_patrickogrady on Twitter](https://twitter.com/_patrickogrady).
-
-Everyone that has used the the C-Chain more than twice (~970k addresses) has
-been airdropped 10 WGM tokens. With the current fee parameterization, this
-should be enough for hundreds of txs.
-
-This is one of the first cases of using Avalanche Subnets as a proving ground
-for changes in a production VM (coreth). Many underestimate how useful the isolation
-of subnets is for performing complex VM testing on a live network (without impacting
-the stability of the primary network).
-
-### Network Creation
-
-To create WAGMI, all we had to do was run the following command:
-```bash
-subnet-cli wizard \
---node-ids=NodeID-9TCq8np31pHjjhGaHtLjs6ptYYPEt3LGb,NodeID-BrYXghQSu6KKGjuzhs3nrkcB46Wc2yYHy,NodeID-89UCR1CsPzzEHuknxhJHKxuFPNCyPz7Bu,NodeID-Hfm8gpD4DpCz4KTzt2osJPfFvu7az3qiD,NodeID-LkdxkfYhg6nSw1EEUxDUSYPXPwmr2cUet \
---vm-genesis-path=networks/11111/genesis.json \
---vm-id=srEXiWaHuhNyGwPUi444Tu47ZEDwxTWrbQiuD7FmgSAQ6X7Dy \
---chain-name=wagmi
-```
-
-This added these NodeIDs as validators on Fuji, created the WAGMI Subnet, added
-all validators to the WAGMI subnet, and created the WAGMI chain.
-
-
-* SubnetID: [28nrH5T2BMvNrWecFcV3mfccjs6axM1TVyqe79MCv2Mhs8kxiY](https://testnet.avascan.info/blockchains?subnet=28nrH5T2BMvNrWecFcV3mfccjs6axM1TVyqe79MCv2Mhs8kxiY)
-* ChainID: [2ebCneCbwthjQ1rYT41nhd7M76Hc6YmosMAQrTFhBq8qeqh6tt](https://testnet.avascan.info/blockchain/2ebCneCbwthjQ1rYT41nhd7M76Hc6YmosMAQrTFhBq8qeqh6tt)
-
-
-### Network Parameters
-
-```
-Network ID: 11111
-Chain ID: 11111
-Block Gas Limit: 20,000,000 (2.5x C-Chain)
-10s Gas Target: 100,000,000 (~6.67x C-Chain)
-Min Fee: 1 GWei (4% of C-Chain)
-Target Block Rate: 2s (Same as C-Chain)
-```
-
-### Adding to MetaMask
-
-```
-Network Name: WAGMI
-RPC URL: https://api.trywagmi.xyz/rpc
-Chain ID: 11111
-Symbol: WGM
-```
-
-![metamask](./imgs/metamask.png)
-
-### Wrapped WAGMI
-
-#### Info
-
-```
-Address: 0x3Ee7094DADda15810F191DD6AcF7E4FFa37571e4
-IPFS: /ipfs/QmVAuheeidjD2ktdX3sSHMQqSfcjtmca1g9jr7w9GQf7pU
-```
-#### Metadata
-
-```json
-{"compiler":{"version":"0.5.17+commit.d19bba13"},"language":"Solidity","output":{"abi":[{"anonymous":false,"inputs":[{"indexed":true,"internalType":"address","name":"src","type":"address"},{"indexed":true,"internalType":"address","name":"guy","type":"address"},{"indexed":false,"internalType":"uint256","name":"wad","type":"uint256"}],"name":"Approval","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"internalType":"address","name":"dst","type":"address"},{"indexed":false,"internalType":"uint256","name":"wad","type":"uint256"}],"name":"Deposit","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"internalType":"address","name":"src","type":"address"},{"indexed":true,"internalType":"address","name":"dst","type":"address"},{"indexed":false,"internalType":"uint256","name":"wad","type":"uint256"}],"name":"Transfer","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"internalType":"address","name":"src","type":"address"},{"indexed":false,"internalType":"uint256","name":"wad","type":"uint256"}],"name":"Withdrawal","type":"event"},{"payable":true,"stateMutability":"payable","type":"fallback"},{"constant":true,"inputs":[{"internalType":"address","name":"","type":"address"},{"internalType":"address","name":"","type":"address"}],"name":"allowance","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":false,"inputs":[{"internalType":"address","name":"guy","type":"address"},{"internalType":"uint256","name":"wad","type":"uint256"}],"name":"approve","outputs":[{"internalType":"bool","name":"","type":"bool"}],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":true,"inputs":[{"internalType":"address","name":"","type":"address"}],"name":"balanceOf","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":true,"inputs":[],"name":"decimals","outputs":[{"internalType":"uint8","name":"","type":"uint8"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":false,"inputs":[],"name":"deposit","outputs":[],"payable":true,"stateMutability":"payable","type":"function"},{"constant":true,"inputs":[],"name":"name","outputs":[{"internalType":"string","name":"","type":"string"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":true,"inputs":[],"name":"symbol","outputs":[{"internalType":"string","name":"","type":"string"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":true,"inputs":[],"name":"totalSupply","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":false,"inputs":[{"internalType":"address","name":"dst","type":"address"},{"internalType":"uint256","name":"wad","type":"uint256"}],"name":"transfer","outputs":[{"internalType":"bool","name":"","type":"bool"}],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":false,"inputs":[{"internalType":"address","name":"src","type":"address"},{"internalType":"address","name":"dst","type":"address"},{"internalType":"uint256","name":"wad","type":"uint256"}],"name":"transferFrom","outputs":[{"internalType":"bool","name":"","type":"bool"}],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":false,"inputs":[{"internalType":"uint256","name":"wad","type":"uint256"}],"name":"withdraw","outputs":[],"payable":false,"stateMutability":"nonpayable","type":"function"}],"devdoc":{"methods":{}},"userdoc":{"methods":{}}},"settings":{"compilationTarget":{"contracts/wwagmi.sol":"WWAGMI"},"evmVersion":"istanbul","libraries":{},"optimizer":{"enabled":false,"runs":200},"remappings":[]},"sources":{"contracts/wwagmi.sol":{"keccak256":"0x0a6ce5559225d3c99db4a5e24777049df3c84886ba9a08147f23afae4261b509","urls":["bzz-raw://0aef254c65ae30b578256a7e2496ed18bf0cb68e97f5831050e17a2cf0192a7e","dweb:/ipfs/QmSwAbdnaYvrjDHTKnE3qBZ3smT7uipSSfSGBUiKWmNWEY"]}},"version":1}
-```
-
-#### Code
-
-```solidity
-// Copyright (C) 2015, 2016, 2017 Dapphub
-
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-// GNU General Public License for more details.
-
-// You should have received a copy of the GNU General Public License
-// along with this program.  If not, see <http://www.gnu.org/licenses/>.
-
-// Contract name, token name, and token symbol modified by Ava Labs 2020
-
-pragma solidity >=0.4.22 <0.6;
-
-contract WWAGMI{
-    string public name     = "Wrapped WAGMI";
-    string public symbol   = "WWAGMI";
-    uint8  public decimals = 18;
-
-    event  Approval(address indexed src, address indexed guy, uint wad);
-    event  Transfer(address indexed src, address indexed dst, uint wad);
-    event  Deposit(address indexed dst, uint wad);
-    event  Withdrawal(address indexed src, uint wad);
-
-    mapping (address => uint)                       public  balanceOf;
-    mapping (address => mapping (address => uint))  public  allowance;
-
-    function() external payable {
-        deposit();
-    }
-    function deposit() public payable {
-        balanceOf[msg.sender] += msg.value;
-        emit Deposit(msg.sender, msg.value);
-    }
-    function withdraw(uint wad) public {
-        require(balanceOf[msg.sender] >= wad);
-        balanceOf[msg.sender] -= wad;
-        msg.sender.transfer(wad);
-        emit Withdrawal(msg.sender, wad);
-    }
-
-    function totalSupply() public view returns (uint) {
-        return address(this).balance;
-    }
-
-    function approve(address guy, uint wad) public returns (bool) {
-        allowance[msg.sender][guy] = wad;
-        emit Approval(msg.sender, guy, wad);
-        return true;
-    }
-
-    function transfer(address dst, uint wad) public returns (bool) {
-        return transferFrom(msg.sender, dst, wad);
-    }
-
-    function transferFrom(address src, address dst, uint wad)
-        public
-        returns (bool)
-    {
-        require(balanceOf[src] >= wad);
-
-        if (src != msg.sender && allowance[src][msg.sender] != uint(-1)) {
-            require(allowance[src][msg.sender] >= wad);
-            allowance[src][msg.sender] -= wad;
-        }
-
-        balanceOf[src] -= wad;
-        balanceOf[dst] += wad;
-
-        emit Transfer(src, dst, wad);
-
-        return true;
-    }
-}
 ```
 
 [become a Fuji Validator]: https://docs.avax.network/build/tutorials/nodes-and-staking/staking-avax-by-validating-or-delegating-with-the-avalanche-wallet

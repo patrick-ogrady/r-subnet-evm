@@ -11,6 +11,18 @@ const (
 	ReadAllowListGasCost   = 5_000
 
 	MintGasCost = 30_000
+
+	StartGasCost      = 50_000
+	DeleteGasCost     = 1_000
+	SponsorGasCost    = 10_000
+	RewardGasCost     = 5_000
+	CommitGasCost     = 10_000
+	RevealGasCost     = 10_000
+	ComputeGasCost    = 100_000
+	ComputeItemCost   = 3_000
+	ComputeRewardCost = 3_000
+	ResultCost        = 5_000
+	NextCost          = 5_000
 )
 
 // Designated addresses of stateful precompiles
@@ -24,9 +36,11 @@ const (
 var (
 	ContractDeployerAllowListAddress = common.HexToAddress("0x0200000000000000000000000000000000000000")
 	ContractNativeMinterAddress      = common.HexToAddress("0x0200000000000000000000000000000000000001")
+	RandomPartyAddress               = common.HexToAddress("0x0300000000000000000000000000000000000000")
 
 	UsedAddresses = []common.Address{
 		ContractDeployerAllowListAddress,
 		ContractNativeMinterAddress,
+		RandomPartyAddress,
 	}
 )
