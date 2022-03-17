@@ -1,4 +1,4 @@
-// (c) 2019-2020, Ava Labs, Inc. All rights reserved.
+// (c) 2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package precompile
@@ -13,19 +13,49 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 )
 
-// -> Start() => commitDeadline=time+1 hour/revealDeadline=time+2 hour; del commits; del reveals; commits=0; reveals=0
-// < Commit Deadline (if 0, no ongoing)
-// -> Commit(hash) => com1=hash;commits=1 [also deducts commitFee but MM
-// doesn't reflect]
-// < Reveal Deadline
-// -> Reveal(num,preimage) =>rev1=preimage;reveals=1;
-// -> Compute() => roundX=result;commitDeadline=0;revealDeadline=0;
-// -> Result(round)-> hash
-// -> Completed()-> uint256
-
 var (
 	_ StatefulPrecompileConfig = (*RandomPartyConfig)(nil)
 
+	// RandomPartyPrecompile is an implementation of an incentivized
+	// commit/reveal VRF.
+	//
+	// Participants in Random Parties follow the flow below:
+	// 1) start() => cleans up the metadata of a previous Random Party and inits
+	//     a new Random Party (setting the length of the "commit" phase and "reveal"
+	//     phase to [PhaseDuration] and setting the "commit" lockup to
+	//     [CommitStake])
+	//
+	//     Note: There is only ever 1 Random Party going on at once.
+	// 2) [optional] sponsor() => anyone can donate funds to an incentive pool that
+	//     is distributed amongst all participants that reveal the preimage of their
+	//     commitment
+	// 3) commit(bytes32 encoded) => submit the hash of some preimage that will
+	//     be broadcasted during the "reveal" phase ([CommitStake] tokens must be
+	//     locked as part of this operation and are returned when the preimage is
+	//     revealed)
+	// 4) reveal(uint256 index, bytes32 preimage) => reveal the preimage for some
+	//     hash that was broadcast during the "commit" phase ([CommitStake] is returned
+	//     at this time)
+	//
+	//     Note: If someone that posted a commitment does not reveal that
+	//     commitment, they will not be able to retrieve their [CommitState].
+	//     This mechanism is a naive deterrent for participants that may try to
+	//     game the result of the computation.
+	// 5) compute() => after the "commit" and "reveal" phases have passed, anyone
+	//     can pay to compute the hash of all preimages (any balance in the
+	//     incentive pool is distributed equally to everyone that broadcast a preimage)
+	//
+	// Contracts use the following methods to access the state of an ongoing/completed Random Party:
+	// 1) reward() => returns the amount in the current incentive pool
+	// 2) result(uint256 round) => returns the computed hash of preimages of a given Random Party
+	//     round
+	// 3) next() => returns the number of the next Random Party round (this
+	//     number-1 is used to query the latest result)
+	//
+	// In short, anyone can start a Random Party on the
+	// chain, anyone can sponsor a reward for contributors, anyone can
+	// participate in providing randomness, and anyone can use the round results
+	// in their smart contract.
 	RandomPartyPrecompile StatefulPrecompiledContract = createRandomPartyPrecompile(RandomPartyAddress)
 )
 
