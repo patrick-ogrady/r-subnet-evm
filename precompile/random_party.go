@@ -101,13 +101,13 @@ func (c *RandomPartyConfig) Address() common.Address {
 // Timestamp returns the timestamp at which the Random Party should be enabled
 func (c *RandomPartyConfig) Timestamp() *big.Int { return c.BlockTimestamp }
 
-// SetPhaseSeconds persists the configruation for "commit" and "reveal"
+// SetPhaseSeconds persists the configuration for "commit" and "reveal"
 // duration to the [StateDB].
 func SetPhaseSeconds(state StateDB, duration *big.Int) {
 	setBig(state, phaseSecondsKey, duration)
 }
 
-// SetCommitState persists the configruation for the required [CommitStake]
+// SetCommitState persists the configuration for the required [CommitStake]
 // to the [StateDB].
 func SetCommitStake(state StateDB, fee *big.Int) {
 	setBig(state, commitStakeKey, fee)
